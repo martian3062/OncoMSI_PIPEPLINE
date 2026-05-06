@@ -22,3 +22,13 @@ def build_approach_slots():
     if slots:
         return slots
     return settings.MSI_DEFAULT_APPROACHES
+
+
+def build_launch_slots():
+    slots = build_approach_slots()
+    launch_slots = []
+    for slot in slots:
+        params = getattr(slot, "default_params", {}) or {}
+        if params.get("launch_enabled", True):
+            launch_slots.append(slot)
+    return launch_slots

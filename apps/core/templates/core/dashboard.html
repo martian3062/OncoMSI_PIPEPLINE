@@ -1,7 +1,7 @@
 {% extends "core/base.html" %}
 
 {% block content %}
-<div class="page-stack" x-data="{ open: true }">
+<div class="page-stack" x-data="{ open: true, tab: 'live' }">
   <section class="hero glass">
     <div>
       <p class="eyebrow">MSI Platform</p>
@@ -76,7 +76,18 @@
     </form>
   </section>
 
-  {% include "core/partials/live_runs_panel.html" %}
+  <section class="tab-strip">
+    <button type="button" class="ghost-button tab-button" :class="{ 'tab-button-active': tab === 'live' }" @click="tab = 'live'">Live</button>
+    <button type="button" class="ghost-button tab-button" :class="{ 'tab-button-active': tab === 'history' }" @click="tab = 'history'">History</button>
+  </section>
+
+  <div x-show="tab === 'live'" x-transition>
+    {% include "core/partials/live_runs_panel.html" %}
+  </div>
+
+  <div x-show="tab === 'history'" x-transition>
+    {% include "core/partials/history_panel.html" %}
+  </div>
 
   {% include "core/partials/metrics_panel.html" %}
 

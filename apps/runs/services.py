@@ -4,7 +4,7 @@ from django.conf import settings
 
 import plotly.graph_objects as go
 
-from apps.approaches.registry import build_approach_slots, sync_default_approaches
+from apps.approaches.registry import build_approach_slots, build_launch_slots, sync_default_approaches
 from apps.archives.models import BatchArchive
 
 from .models import Run, RunApproachLink, RunState
@@ -13,7 +13,7 @@ from .n8n import trigger_n8n_run_created
 
 def create_run_from_payload(payload: dict) -> Run:
     sync_default_approaches()
-    slots = build_approach_slots()
+    slots = build_launch_slots()
     run = Run.objects.create(
         experiment_name=payload["experiment_name"],
         source_uri=payload["source_uri"],
@@ -69,7 +69,17 @@ def dashboard_summary() -> dict:
             go.Bar(
                 x=list(by_approach.keys()),
                 y=list(by_approach.values()),
-                marker_color=["#54d7ff", "#ff7c6b", "#ffd166"][: len(by_approach)],
+                marker_color=[
+                    "#54d7ff",
+                    "#ff7c6b",
+                    "#ffd166",
+                    "#9bffb0",
+                    "#89a8ff",
+                    "#ff9be7",
+                    "#95f0ff",
+                    "#ffb86c",
+                    "#b0b7ff",
+                ][: len(by_approach)],
                 text=list(by_approach.values()),
                 textposition="outside",
             )

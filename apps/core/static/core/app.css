@@ -8,6 +8,7 @@
   --accent-cyan: #54d7ff;
   --accent-coral: #ff7c6b;
   --accent-lime: #b6ff81;
+  --accent-amber: #ffd166;
 }
 
 * {
@@ -89,6 +90,11 @@ body {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 18px;
+}
+
+.tab-strip {
+  display: flex;
+  gap: 12px;
 }
 
 .live-run-card {
@@ -177,6 +183,44 @@ body {
   word-break: break-all;
 }
 
+.history-panel {
+  padding: 20px;
+}
+
+.history-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 18px;
+}
+
+.history-list,
+.archive-list {
+  display: grid;
+  gap: 14px;
+}
+
+.history-card,
+.archive-card {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 18px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.path-log {
+  margin-top: 12px;
+  display: grid;
+  gap: 6px;
+}
+
+.path-log code,
+.approach-chip code,
+.archive-card code {
+  font-size: 12px;
+  color: var(--muted);
+  word-break: break-all;
+}
+
 .hero {
   display: flex;
   justify-content: space-between;
@@ -218,6 +262,11 @@ button {
   background: rgba(255, 255, 255, 0.06);
   color: var(--text);
   border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.tab-button-active {
+  background: linear-gradient(135deg, var(--accent-cyan), #88f1ff);
+  color: #04111a;
 }
 
 .eyebrow,
@@ -269,6 +318,7 @@ td {
   .launch-grid,
   .integration-strip,
   .live-runs-grid,
+  .history-grid,
   .live-stats,
   .approach-strip {
     grid-template-columns: 1fr;

@@ -6,6 +6,7 @@ from django.shortcuts import redirect, render
 from django.views.decorators.http import require_GET, require_POST
 
 from apps.approaches.registry import build_approach_slots
+from apps.archives.models import BatchArchive
 from apps.runs.models import Run
 from apps.runs.services import create_run_from_payload, dashboard_summary
 from apps.runs.vm_runtime import sync_run_status
@@ -37,6 +38,8 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         "chart_json": json.dumps(summary["chart"]),
         "recent_runs": live_runs[:6],
         "live_runs": live_runs,
+        "history_runs": hydrate_history_runs(),
+        "archive_records": BatchArchive.objects.order_by("-updated_at")[:8],
         "integrations": integration_summary(),
     }
     return render(request, "core/dashboard.html", context)
@@ -62,6 +65,18 @@ def live_runs_partial(request: HttpRequest) -> HttpResponse:
         "core/partials/live_runs_panel.html",
         {
             "live_runs": hydrate_live_runs(),
+        },
+    )
+
+
+@require_GET
+def history_partial(request: HttpRequest) -> HttpResponse:
+    return render(
+        request,
+        "core/partials/history_panel.html",
+        {
+            "history_runs": hydrate_history_runs(),
+            "archive_records": BatchArchive.objects.order_by("-updated_at")[:8],
         },
     )
 
@@ -114,4 +129,23 @@ def hydrate_live_runs():
             run.best_link = max(completed_links, key=lambda item: item.mean_auroc or 0.0)
         if run.state or run.selected_slide_display or run.best_link:
             hydrated_runs.append(run)
+    return hydrated_runs
+
+
+def hydrate_history_runs():
+    runs = list(Run.objects.filter(state__in=["completed", "failed"]).order_by("-updated_at")[:10])
+    hydrated_runs = []
+    for run in runs:
+        run.label_counts_msi_h = (run.label_counts or {}).get("MSI-H", 0)
+        run.label_counts_mss = (run.label_counts or {}).get("MSS", 0)
+        run.state_display = STATE_LABELS.get(run.state, run.state.replace("_", " ").title())
+        run.selected_slide_display = run.selected_slide_count or run.requested_slide_limit
+        run.extractor_display = (run.feature_extractor_used or "pending").replace(",", ", ")
+        links = list(run.approach_links.select_related("approach_template").all())
+        run.display_links = links
+        for link in links:
+            link.state_display = STATE_LABELS.get(link.state, link.state.replace("_", " ").title())
+            link.mean_auroc_display = f"{link.mean_auroc:.3f}" if link.mean_auroc is not None else ""
+            link.mean_f1_display = f"{link.mean_f1_macro:.3f}" if link.mean_f1_macro is not None else ""
+        hydrated_runs.append(run)
     return hydrated_runs

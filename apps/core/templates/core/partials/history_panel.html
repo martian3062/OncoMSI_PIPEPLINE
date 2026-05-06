@@ -1,0 +1,84 @@
+<section
+  id="history-panel"
+  class="history-panel glass"
+  hx-get="{% url 'history-partial' %}"
+  hx-trigger="load, every 60s"
+  hx-swap="outerHTML"
+>
+  <div class="section-head">
+    <h3>History</h3>
+    <span>Completed and failed runs are preserved</span>
+  </div>
+  <div class="history-grid">
+    <div class="history-list">
+      {% for run in history_runs %}
+      <article class="history-card">
+        <div class="section-head">
+          <div>
+            <strong>{{ run.experiment_name }}</strong>
+            <div class="muted">{{ run.run_id }}</div>
+          </div>
+          <span class="status-pill {% if run.state == 'completed' %}status-pill-complete{% elif run.state == 'failed' %}status-pill-failed{% endif %}">{{ run.state_display }}</span>
+        </div>
+        <div class="live-stats">
+          <div>
+            <p class="eyebrow">Slides</p>
+            <strong>{{ run.selected_slide_display }}</strong>
+          </div>
+          <div>
+            <p class="eyebrow">MSI-H</p>
+            <strong>{{ run.label_counts_msi_h }}</strong>
+          </div>
+          <div>
+            <p class="eyebrow">MSS</p>
+            <strong>{{ run.label_counts_mss }}</strong>
+          </div>
+          <div>
+            <p class="eyebrow">Extractor</p>
+            <strong>{{ run.extractor_display }}</strong>
+          </div>
+        </div>
+        <div class="approach-strip">
+          {% for link in run.display_links %}
+          <div class="approach-chip {% if link.state == 'completed' %}approach-chip-complete{% elif link.state == 'failed' %}approach-chip-failed{% endif %}">
+            <span>{{ link.approach_template.label }}</span>
+            <strong>{{ link.state_display|default:"Pending" }}</strong>
+            {% if link.mean_auroc_display or link.mean_f1_display %}
+            <span class="muted">AUROC {{ link.mean_auroc_display|default:"-" }} | F1 {{ link.mean_f1_display|default:"-" }}</span>
+            {% endif %}
+            {% if link.metrics_path %}
+            <code>{{ link.metrics_path }}</code>
+            {% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        <div class="path-log">
+          {% if run.remote_status_path %}<code>Status: {{ run.remote_status_path }}</code>{% endif %}
+          {% if run.remote_launch_log_path %}<code>Launch log: {{ run.remote_launch_log_path }}</code>{% endif %}
+          {% if run.archive_path %}<code>Archive glob: {{ run.archive_path }}</code>{% endif %}
+        </div>
+      </article>
+      {% empty %}
+      <article class="history-card">
+        <p>No preserved run history yet.</p>
+      </article>
+      {% endfor %}
+    </div>
+    <div class="archive-list">
+      {% for archive in archive_records %}
+      <article class="archive-card">
+        <strong>{{ archive.state|title }}</strong>
+        <div class="muted">{{ archive.archive_root }}</div>
+        <div class="muted">Batches {{ archive.completed_batches }}</div>
+        {% if archive.orchestration_status_path %}
+        <code>{{ archive.orchestration_status_path }}</code>
+        {% endif %}
+      </article>
+      {% empty %}
+      <article class="archive-card">
+        <p>No archive snapshots synced yet.</p>
+      </article>
+      {% endfor %}
+    </div>
+  </div>
+</section>

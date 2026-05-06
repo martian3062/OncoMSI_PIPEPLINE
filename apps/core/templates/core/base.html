@@ -23,6 +23,13 @@
           <p class="slot-kicker">{{ slot.key|upper }}</p>
           <h3>{{ slot.label }}</h3>
           <p>{{ slot.model_family }} | {{ slot.default_params.feature_extractor|default:"extractor pending" }}</p>
+          <p class="muted">
+            {% if slot.default_params.launch_enabled %}
+            Ready on VM
+            {% else %}
+            Adapter needed
+            {% endif %}
+          </p>
         </section>
         {% endfor %}
       </div>

@@ -19,6 +19,7 @@ import pandas as pd
 from sklearn.metrics import f1_score, roc_auc_score, roc_curve
 from sklearn.model_selection import StratifiedKFold
 
+from hybrid_extractors import hybrid_backend_for_name, register_hybrid_extractors
 
 TILE_PX = 256
 TILE_UM = 128
@@ -156,6 +157,26 @@ def requested_virchow_weights(config: dict[str, Any]) -> str | None:
     if value in (None, "", "None"):
         return None
     return str(value)
+
+
+def requested_hf_token(config: dict[str, Any]) -> str | None:
+    value = config["request"].get("hf_token")
+    if value in (None, "", "None"):
+        return None
+    return str(value)
+
+
+def requested_extractor_backend(config: dict[str, Any], spec: dict[str, Any]) -> str:
+    explicit = spec.get("extractor_backend")
+    if explicit not in (None, "", "None"):
+        return str(explicit)
+    request_default = config["request"].get("extractor_backend")
+    if request_default not in (None, "", "None"):
+        return str(request_default)
+    candidates = requested_feature_extractors_for_spec(config, spec, requested_feature_extractors(config))
+    if any(hybrid_backend_for_name(name) == "hybrid" for name in candidates):
+        return "hybrid"
+    return "slideflow"
 
 
 def requested_mil_models(spec: dict[str, Any]) -> list[str]:
@@ -483,6 +504,7 @@ def import_slideflow():
 
 def load_project(bundle_root: Path, annotations_csv: Path, slides_dir: Path):
     sf = import_slideflow()
+    register_hybrid_extractors(sf)
     sf_root = bundle_root / "slideflow_project"
     sf_root.mkdir(parents=True, exist_ok=True)
     dataset_config = sf_root / "datasets.json"
@@ -510,16 +532,28 @@ def make_dataset(project):
     return project.dataset(tile_px=TILE_PX, tile_um=TILE_UM)
 
 
-def build_extractor(sf, candidates: list[str], virchow_weights: str | None = None):
+def build_extractor(
+    sf,
+    candidates: list[str],
+    virchow_weights: str | None = None,
+    hf_token: str | None = None,
+    requested_backend: str = "auto",
+):
     errors: dict[str, str] = {}
     for name in candidates:
         try:
+            backend = requested_backend
+            inferred = hybrid_backend_for_name(name)
+            if backend == "auto":
+                backend = inferred
             kwargs = {"resize": True, "mixed_precision": True}
-            if name == "virchow" and virchow_weights:
+            if backend == "hybrid":
+                kwargs["hf_token"] = hf_token
+            elif name == "virchow" and virchow_weights:
                 kwargs["weights"] = virchow_weights
             if name == "resnet50_imagenet":
                 kwargs["tile_px"] = TILE_PX
-            return sf.build_feature_extractor(name, **kwargs), name
+            return sf.build_feature_extractor(name, **kwargs), name, backend
         except Exception as exc:
             errors[name] = f"{type(exc).__name__}: {exc}"
             continue
@@ -599,14 +633,18 @@ def prepare_bundle_for_training(config: dict[str, Any]) -> dict[str, Any]:
     bags_by_extractor: dict[str, str] = {}
     approach_payloads: dict[str, dict[str, Any]] = {}
     approach_extractors: dict[str, str] = {}
+    approach_backends: dict[str, str] = {}
     default_virchow_weights = requested_virchow_weights(config)
+    hf_token = requested_hf_token(config)
     for spec in config["specs"]:
         approach_label = str(spec["approach_label"])
         spec_candidates = requested_feature_extractors_for_spec(config, spec, feature_candidates)
-        extractor, extractor_name = build_extractor(
+        extractor, extractor_name, extractor_backend = build_extractor(
             sf,
             spec_candidates,
             str(spec.get("virchow_weights") or default_virchow_weights or ""),
+            hf_token=hf_token,
+            requested_backend=requested_extractor_backend(config, spec),
         )
         if extractor_name not in bags_by_extractor:
             bags_dir = bundle_root / "slideflow_project" / "bags" / f"{extractor_name}_{TILE_PX}px_{TILE_UM}um"
@@ -619,9 +657,11 @@ def prepare_bundle_for_training(config: dict[str, Any]) -> dict[str, Any]:
         approach_payloads[approach_label] = {
             "feature_extractor_candidates": spec_candidates,
             "feature_extractor_used": extractor_name,
+            "extractor_backend": extractor_backend,
             "bags_dir": bags_by_extractor[extractor_name],
         }
         approach_extractors[approach_label] = extractor_name
+        approach_backends[approach_label] = extractor_backend
 
     prepared = {
         **subset,
@@ -629,6 +669,7 @@ def prepare_bundle_for_training(config: dict[str, Any]) -> dict[str, Any]:
         "feature_extractor_used": next(iter(bags_by_extractor)) if len(bags_by_extractor) == 1 else "multiple",
         "feature_extractor_candidates": feature_candidates,
         "feature_extractors_by_approach": approach_extractors,
+        "extractor_backends_by_approach": approach_backends,
         "approaches": approach_payloads,
         "n_folds": int(subset["n_folds"]),
     }
