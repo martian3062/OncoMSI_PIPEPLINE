@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ app_name }}</title>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <script defer src="https://unpkg.com/alpinejs@3.14.9/dist/cdn.min.js"></script>
+  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+  <link rel="stylesheet" href="/static/core/app.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar glass">
+      <div>
+        <p class="eyebrow">OncoMSI</p>
+        <h1>{{ app_name }}</h1>
+        <p class="lede">Multi-approach MSI training and monitoring.</p>
+      </div>
+      <div class="slot-list">
+        {% for slot in approach_slots %}
+        <section class="slot-card">
+          <p class="slot-kicker">{{ slot.key|upper }}</p>
+          <h3>{{ slot.label }}</h3>
+          <p>{{ slot.model_family }} | {{ slot.default_params.feature_extractor|default:"extractor pending" }}</p>
+        </section>
+        {% endfor %}
+      </div>
+    </aside>
+    <main class="content">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</body>
+</html>

@@ -1,0 +1,35 @@
+<section id="metrics-panel" class="metrics-grid">
+  <article class="metric-card glass">
+    <p class="eyebrow">Runs</p>
+    <h3>{{ summary.total_runs }}</h3>
+    <p class="muted">Tracked in Django.</p>
+  </article>
+  <article class="metric-card glass">
+    <p class="eyebrow">Active</p>
+    <h3>{{ summary.active_runs }}</h3>
+    <p class="muted">In progress.</p>
+  </article>
+  <article class="metric-card glass">
+    <p class="eyebrow">Archives</p>
+    <h3>{{ summary.archive_count }}</h3>
+    <p class="muted">Saved outputs.</p>
+  </article>
+  <article class="metric-card glass">
+    <p class="eyebrow">Approaches</p>
+    <h3>{{ summary.approach_count }}</h3>
+    <p class="muted">Configured slots.</p>
+  </article>
+  <article class="chart-card glass">
+    <div class="section-head">
+      <h3>Approach Snapshot</h3>
+      <span>Live chart</span>
+    </div>
+    <div id="score-chart" class="chart-host"></div>
+    <script>
+      (() => {
+        const chartData = {{ chart_json|safe }};
+        Plotly.newPlot("score-chart", chartData.data, chartData.layout, {displayModeBar: false, responsive: true});
+      })();
+    </script>
+  </article>
+</section>

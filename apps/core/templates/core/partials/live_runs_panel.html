@@ -1,0 +1,67 @@
+<section
+  id="live-runs-panel"
+  class="runs-live-panel glass"
+  hx-get="{% url 'live-runs-partial' %}"
+  hx-trigger="load, every 20s"
+  hx-swap="outerHTML"
+>
+  <div class="section-head">
+    <h3>Live Runs</h3>
+    <span>Refreshes every 20s</span>
+  </div>
+  <div class="live-runs-grid">
+    {% for run in live_runs %}
+    <article class="live-run-card {% if run.is_complete %}live-run-card-complete{% endif %}">
+      <div class="section-head">
+        <div>
+          <strong>{{ run.experiment_name }}</strong>
+          <div class="muted">{{ run.run_id }}</div>
+        </div>
+        <span class="status-pill {% if run.is_complete %}status-pill-complete{% elif run.state == 'failed' %}status-pill-failed{% endif %}">{{ run.state_display }}</span>
+      </div>
+      {% if run.best_link %}
+      <div class="run-outcome">
+        <span class="eyebrow">Best result</span>
+        <strong>{{ run.best_link.approach_template.label }}</strong>
+        <span class="muted">AUROC {{ run.best_link.mean_auroc_display }} | F1 {{ run.best_link.mean_f1_display }}</span>
+      </div>
+      {% endif %}
+      <div class="live-stats">
+        <div>
+          <p class="eyebrow">Selected</p>
+          <strong>{{ run.selected_slide_display }}</strong>
+        </div>
+        <div>
+          <p class="eyebrow">MSI-H</p>
+          <strong>{{ run.label_counts_msi_h }}</strong>
+        </div>
+        <div>
+          <p class="eyebrow">MSS</p>
+          <strong>{{ run.label_counts_mss }}</strong>
+        </div>
+        <div>
+          <p class="eyebrow">Extractor</p>
+          <strong>{{ run.extractor_display }}</strong>
+        </div>
+      </div>
+      <div class="approach-strip">
+        {% for link in run.display_links %}
+        <div class="approach-chip {% if link.state == 'completed' %}approach-chip-complete{% elif link.state == 'failed' %}approach-chip-failed{% endif %}">
+          <span>{{ link.approach_template.label }}</span>
+          <span class="muted">{{ link.trainer_params.feature_extractor|default:"shared" }}</span>
+          <strong>{{ link.state_display|default:"Pending" }}</strong>
+          {% if link.mean_auroc_display or link.mean_f1_display %}
+          <span class="muted">AUROC {{ link.mean_auroc_display|default:"-" }} | F1 {{ link.mean_f1_display|default:"-" }}</span>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+      <div class="muted small-copy">{{ run.remote_status_path|default:"No status path yet" }}</div>
+    </article>
+    {% empty %}
+    <article class="live-run-card">
+      <p>No live runs.</p>
+    </article>
+    {% endfor %}
+  </div>
+</section>

@@ -1,0 +1,50 @@
+{
+  "id": "msi_django_launch_workflow",
+  "name": "msi-django-launch",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "msi-django-launch",
+        "responseMode": "onReceived"
+      },
+      "id": "webhook-node",
+      "name": "Run Created Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const payload = $json.body || $json;\nreturn [{ json: {\n  run_id: payload.run_id,\n  experiment_name: payload.experiment_name,\n  source_uri: payload.source_uri,\n  annotations_csv: payload.annotations_csv,\n  requested_slide_limit: payload.requested_slide_limit,\n  feature_extractor_candidates: payload.feature_extractor_candidates,\n  n_folds: payload.n_folds,\n  n_repeats: payload.n_repeats,\n  max_tiles_per_slide: payload.max_tiles_per_slide,\n  approaches: payload.approaches,\n  received_at: new Date().toISOString()\n}}];"
+      },
+      "id": "normalize-node",
+      "name": "Normalize Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        260
+      ]
+    }
+  ],
+  "connections": {
+    "Run Created Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "versionId": "1"
+}

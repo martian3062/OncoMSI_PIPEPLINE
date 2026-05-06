@@ -1,0 +1,121 @@
+{% extends "core/base.html" %}
+
+{% block content %}
+<div class="page-stack" x-data="{ open: true }">
+  <section class="hero glass">
+    <div>
+      <p class="eyebrow">MSI Platform</p>
+      <h2>TCGA COAD training control</h2>
+      <p class="lede">Launch runs, track progress, and compare outcomes.</p>
+    </div>
+    <button class="ghost-button" @click="open = !open" x-text="open ? 'Hide Form' : 'Show Form'"></button>
+  </section>
+
+  <section class="integration-strip">
+    <article class="integration-card glass">
+      <p class="eyebrow">Hugging Face</p>
+      <h3>{% if integrations.hf_configured %}Connected{% else %}Missing token{% endif %}</h3>
+      <p class="muted">Extractor access is ready.</p>
+    </article>
+    <article class="integration-card glass">
+      <p class="eyebrow">n8n</p>
+      <h3>{% if integrations.n8n_enabled %}Connected{% else %}Disabled{% endif %}</h3>
+      <p class="muted">{{ integrations.n8n_base_url }}</p>
+    </article>
+  </section>
+
+  <section class="launch-panel glass" x-show="open" x-transition>
+    <form
+      method="post"
+      action="{% url 'launch-run' %}"
+      hx-post="{% url 'launch-run' %}"
+      hx-target="#metrics-panel"
+      hx-swap="outerHTML"
+      class="launch-grid"
+    >
+      {% csrf_token %}
+      <label>
+        <span>Experiment Name</span>
+        <input type="text" name="experiment_name" value="tcga3-vm-200x10f-virchow-retccl-ctranspath-256tiles">
+      </label>
+      <label>
+        <span>Bucket URI</span>
+        <input type="text" name="source_uri" value="gs://wsi_aiml_repo/TCGA/TCGA_COAD/TCGA_COAD">
+      </label>
+      <label>
+        <span>Annotations CSV</span>
+        <input type="text" name="annotations_csv" value="/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/django_rebuild_cleaned_msi/runtime/annotations/tcga3_vm_annotations.csv">
+      </label>
+      <label>
+        <span>Slide Limit</span>
+        <input type="number" name="requested_slide_limit" value="200">
+      </label>
+      <label>
+        <span>Folds</span>
+        <input type="number" name="n_folds" value="10">
+      </label>
+      <label>
+        <span>Repeats</span>
+        <input type="number" name="n_repeats" value="1">
+      </label>
+      <label>
+        <span>Max Tiles / Slide</span>
+        <input type="number" name="max_tiles_per_slide" value="256">
+      </label>
+      <label>
+        <span>Feature Extractors</span>
+        <input type="text" name="feature_extractors" value="virchow,retccl,ctranspath">
+      </label>
+      <label>
+        <span>Optional n8n Webhook URL</span>
+        <input type="text" name="n8n_webhook_url" placeholder="http://127.0.0.1:5678/webhook/...">
+      </label>
+      <div class="form-actions">
+        <button type="submit">Create Run</button>
+      </div>
+    </form>
+  </section>
+
+  {% include "core/partials/live_runs_panel.html" %}
+
+  {% include "core/partials/metrics_panel.html" %}
+
+  <section class="runs-table glass">
+    <div class="section-head">
+      <h3>Recent Runs</h3>
+      <span>{{ recent_runs|length }} shown</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Run</th>
+            <th>State</th>
+            <th>Slides</th>
+            <th>Extractor</th>
+            <th>Approaches</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for run in recent_runs %}
+          <tr>
+            <td>
+              <strong>{{ run.run_id }}</strong>
+              <div class="muted">{{ run.experiment_name }}</div>
+            </td>
+            <td>{{ run.state_display|default:run.state }}</td>
+            <td>{{ run.selected_slide_display|default:run.requested_slide_limit }}</td>
+            <td>{{ run.extractor_display|default:run.feature_extractor_used|default:"pending" }}</td>
+            <td>{{ run.approach_links.count }}</td>
+          </tr>
+          {% empty %}
+          <tr>
+            <td colspan="5">No runs yet.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </section>
+</div>
+{% endblock %}
