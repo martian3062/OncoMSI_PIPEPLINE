@@ -14,12 +14,17 @@
   <link rel="stylesheet" href="{% static 'core/app.css' %}?v={{ asset_version }}">
 </head>
 <body>
+  <div class="ambient-bg" aria-hidden="true">
+    <div class="ambient-orb ambient-orb-one"></div>
+    <div class="ambient-orb ambient-orb-two"></div>
+    <div class="ambient-grid"></div>
+  </div>
   <div class="shell">
     <aside class="sidebar glass">
       <div>
         <p class="eyebrow">OncoMSI</p>
         <h1>{{ app_name }}</h1>
-        <p class="lede">Multi-approach MSI training and monitoring.</p>
+        <p class="lede">Lightweight live MSI orchestration with hybrid-02 model tracking.</p>
       </div>
       <div class="slot-list">
         {% for slot in approach_slots %}

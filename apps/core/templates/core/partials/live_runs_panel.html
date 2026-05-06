@@ -2,7 +2,7 @@
   id="live-runs-panel"
   class="runs-live-panel glass"
   hx-get="{% url 'live-runs-partial' %}"
-  hx-trigger="load delay:3s, every 20s"
+  hx-trigger="load delay:1.5s, every 12s"
   hx-swap="outerHTML"
 >
   <div class="section-head">
@@ -23,6 +23,20 @@
         <strong>{{ run.stage_title }}</strong>
         <span class="muted">{{ run.stage_detail }}</span>
       </div>
+      <div class="run-progress-block">
+        <div class="run-progress-topline">
+          <span class="eyebrow">Live Sync</span>
+          <strong>{{ run.progress_percent }}%</strong>
+        </div>
+        <div class="run-progress-bar">
+          <span class="run-progress-fill" style="width: {{ run.progress_percent }}%"></span>
+        </div>
+        <div class="run-progress-meta">
+          <span>{{ run.progress_detail }}</span>
+          <span>{{ run.eta_display }}</span>
+          <span>Elapsed {{ run.elapsed_display }}</span>
+        </div>
+      </div>
       {% if run.sync_error %}
       <div class="run-warning-strip">
         <strong>VM sync warning</strong>
@@ -36,7 +50,7 @@
         <span class="muted">AUROC {{ run.best_link.mean_auroc_display }} | F1 {{ run.best_link.mean_f1_display }}</span>
       </div>
       {% endif %}
-      <div class="live-stats">
+      <div class="live-stats live-stats-columns">
         <div>
           <p class="eyebrow">Selected</p>
           <strong>{{ run.selected_slide_display }}</strong>
@@ -61,6 +75,43 @@
           <p class="eyebrow">Running</p>
           <strong>{{ run.running_link_count }}</strong>
         </div>
+        <div>
+          <p class="eyebrow">External</p>
+          <strong>{{ run.external_cohort_count }}</strong>
+        </div>
+        <div>
+          <p class="eyebrow">Failed</p>
+          <strong>{{ run.failed_link_count }}</strong>
+        </div>
+      </div>
+      {% if run.best_link %}
+      <div class="science-grid">
+        {% for metric in run.best_link.scientific_metrics %}
+        <div class="science-metric">
+          <p class="eyebrow">{{ metric.label }}</p>
+          <strong>{{ metric.value }}</strong>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+      <div class="mini-chart-card">
+        <div class="section-head">
+          <h4>Live Leaderboard</h4>
+          <span>Best synced AUROC per approach</span>
+        </div>
+        <div class="mini-chart-list">
+          {% for link in run.display_links %}
+          <div class="mini-bar-row">
+            <div class="mini-bar-copy">
+              <strong>{{ link.approach_template.label }}</strong>
+              <span class="muted">{{ link.mean_auroc_display|default:"pending" }}</span>
+            </div>
+            <div class="mini-bar-track">
+              <span class="mini-bar-fill {% if link.state == 'completed' %}mini-bar-fill-complete{% elif link.state == 'failed' %}mini-bar-fill-failed{% endif %}" style="width: {{ link.chart_score_pct }}%"></span>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
       </div>
       <div class="approach-strip">
         {% for link in run.display_links %}
@@ -70,6 +121,15 @@
           <strong>{{ link.state_display|default:"Pending" }}</strong>
           {% if link.mean_auroc_display or link.mean_f1_display %}
           <span class="muted">AUROC {{ link.mean_auroc_display|default:"-" }} | F1 {{ link.mean_f1_display|default:"-" }}</span>
+          {% endif %}
+          {% if link.mean_auprc_display != "-" or link.mean_balanced_accuracy_display != "-" %}
+          <span class="muted">AUPRC {{ link.mean_auprc_display }} | Bal Acc {{ link.mean_balanced_accuracy_display }}</span>
+          {% endif %}
+          {% if link.mean_recall_display != "-" or link.mean_specificity_display != "-" %}
+          <span class="muted">Recall {{ link.mean_recall_display }} | Spec {{ link.mean_specificity_display }}</span>
+          {% endif %}
+          {% if link.available_bag_slide_count_display != "-" or link.missing_bag_slide_count %}
+          <span class="muted">Bags {{ link.available_bag_slide_count_display }} | Missing {{ link.missing_bag_slide_count }}</span>
           {% endif %}
         </div>
         {% endfor %}

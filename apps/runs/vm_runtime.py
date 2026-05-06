@@ -31,6 +31,7 @@ def build_bundle_config(run: Run, target=None) -> dict[str, Any]:
         "slide_limit": run.requested_slide_limit,
         "n_folds": run.n_folds,
         "n_repeats": run.n_repeats,
+        "external_cohorts": run.external_cohorts,
         "preferred_slide_pattern": "DX",
         "preferred_exact_suffix": "DX1",
         "annotations_csv": run.annotations_csv or settings.VM_DEFAULT_ANNOTATIONS,
@@ -65,7 +66,7 @@ def build_bundle_config(run: Run, target=None) -> dict[str, Any]:
                 "experiment_name": f"{run.experiment_name}-{link.approach_template.key}-{model_family}-seed{params.get('seed', 310)}",
                 **shared,
                 "experiment_id": f"{run.run_id}_a{index}",
-                "training_mode": "mil",
+                "training_mode": str(params.get("training_mode", "mil")),
                 "approach_label": label,
                 "feature_extractor": str(params.get("feature_extractor", feature_extractor)),
                 "extractor_backend": str(params.get("extractor_backend", "auto")),
@@ -160,6 +161,26 @@ def sync_run_status(run: Run) -> dict[str, Any]:
             link.metrics_path = str(metrics_path)
             link.mean_auroc = payload.get("mean_auroc")
             link.mean_f1_macro = payload.get("mean_f1_macro")
+            link.mean_f1_macro_default_threshold = payload.get("mean_f1_macro_default_threshold")
+            link.mean_auprc = payload.get("mean_auprc")
+            link.mean_balanced_accuracy = payload.get("mean_balanced_accuracy")
+            link.mean_precision = payload.get("mean_precision")
+            link.mean_recall_msi_h = payload.get("mean_recall_msi_h")
+            link.mean_specificity = payload.get("mean_specificity")
+            link.mean_best_threshold = payload.get("mean_best_threshold")
+            link.mean_brier_score = payload.get("mean_brier_score")
+            link.auroc_std = payload.get("auroc_std")
+            link.auroc_ci_low = payload.get("auroc_ci_low")
+            link.auroc_ci_high = payload.get("auroc_ci_high")
+            link.auroc_per_fold = payload.get("auroc_per_fold", link.auroc_per_fold)
+            link.fold_metrics = payload.get("fold_metrics", link.fold_metrics)
+            link.aggregate_confusion_matrix = payload.get(
+                "aggregate_confusion_matrix",
+                link.aggregate_confusion_matrix,
+            )
+            link.available_bag_slide_count = payload.get("available_bag_slide_count")
+            link.missing_bag_slides = payload.get("missing_bag_slides", link.missing_bag_slides)
+            link.external_metrics = payload.get("external_metrics", link.external_metrics)
             link.prediction_artifacts = payload.get("artifacts", link.prediction_artifacts)
         except Exception:
             try:
@@ -168,7 +189,33 @@ def sync_run_status(run: Run) -> dict[str, Any]:
             except Exception:
                 continue
         approach_states.append(link.state)
-        link.save(update_fields=["state", "metrics_path", "mean_auroc", "mean_f1_macro", "prediction_artifacts", "updated_at"])
+        link.save(
+            update_fields=[
+                "state",
+                "metrics_path",
+                "mean_auroc",
+                "mean_f1_macro",
+                "mean_f1_macro_default_threshold",
+                "mean_auprc",
+                "mean_balanced_accuracy",
+                "mean_precision",
+                "mean_recall_msi_h",
+                "mean_specificity",
+                "mean_best_threshold",
+                "mean_brier_score",
+                "auroc_std",
+                "auroc_ci_low",
+                "auroc_ci_high",
+                "auroc_per_fold",
+                "fold_metrics",
+                "aggregate_confusion_matrix",
+                "available_bag_slide_count",
+                "missing_bag_slides",
+                "external_metrics",
+                "prediction_artifacts",
+                "updated_at",
+            ]
+        )
 
     final_summary_path = PurePosixPath(run.remote_status_path).parent / "final_summary.json"
     try:
@@ -179,7 +226,17 @@ def sync_run_status(run: Run) -> dict[str, Any]:
             run.selected_slide_count = int(summary["selected_slide_count"])
         if summary.get("label_counts"):
             run.label_counts = summary["label_counts"]
-        run.save(update_fields=["feature_extractor_used", "selected_slide_count", "label_counts", "updated_at"])
+        if summary.get("external_cohorts") is not None:
+            run.external_cohorts = summary["external_cohorts"]
+        run.save(
+            update_fields=[
+                "feature_extractor_used",
+                "selected_slide_count",
+                "label_counts",
+                "external_cohorts",
+                "updated_at",
+            ]
+        )
     except Exception:
         summary = None
 

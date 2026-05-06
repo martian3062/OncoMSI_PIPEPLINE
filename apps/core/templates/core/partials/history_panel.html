@@ -20,7 +20,7 @@
           </div>
           <span class="status-pill {% if run.state == 'completed' %}status-pill-complete{% elif run.state == 'failed' %}status-pill-failed{% endif %}">{{ run.state_display }}</span>
         </div>
-        <div class="live-stats">
+        <div class="live-stats live-stats-columns">
           <div>
             <p class="eyebrow">Slides</p>
             <strong>{{ run.selected_slide_display }}</strong>
@@ -37,7 +37,33 @@
             <p class="eyebrow">Extractor</p>
             <strong>{{ run.extractor_display }}</strong>
           </div>
+          <div>
+            <p class="eyebrow">ETA</p>
+            <strong>{{ run.eta_display }}</strong>
+          </div>
+          <div>
+            <p class="eyebrow">Elapsed</p>
+            <strong>{{ run.elapsed_display }}</strong>
+          </div>
+          <div>
+            <p class="eyebrow">Approaches</p>
+            <strong>{{ run.completed_link_count }}/{{ run.total_link_count }}</strong>
+          </div>
+          <div>
+            <p class="eyebrow">Updated</p>
+            <strong>{{ run.last_sync_display }}</strong>
+          </div>
         </div>
+        {% if run.best_link %}
+        <div class="science-grid history-science-grid">
+          {% for metric in run.best_link.scientific_metrics %}
+          <div class="science-metric">
+            <p class="eyebrow">{{ metric.label }}</p>
+            <strong>{{ metric.value }}</strong>
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
         <div class="approach-strip">
           {% for link in run.display_links %}
           <div class="approach-chip {% if link.state == 'completed' %}approach-chip-complete{% elif link.state == 'failed' %}approach-chip-failed{% endif %}">
@@ -45,6 +71,12 @@
             <strong>{{ link.state_display|default:"Pending" }}</strong>
             {% if link.mean_auroc_display or link.mean_f1_display %}
             <span class="muted">AUROC {{ link.mean_auroc_display|default:"-" }} | F1 {{ link.mean_f1_display|default:"-" }}</span>
+            {% endif %}
+            {% if link.mean_auprc_display != "-" or link.mean_balanced_accuracy_display != "-" %}
+            <span class="muted">AUPRC {{ link.mean_auprc_display }} | Bal Acc {{ link.mean_balanced_accuracy_display }}</span>
+            {% endif %}
+            {% if link.mean_recall_display != "-" or link.mean_specificity_display != "-" %}
+            <span class="muted">Recall {{ link.mean_recall_display }} | Spec {{ link.mean_specificity_display }}</span>
             {% endif %}
             {% if link.metrics_path %}
             <code>{{ link.metrics_path }}</code>

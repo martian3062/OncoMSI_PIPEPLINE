@@ -16,7 +16,17 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import f1_score, roc_auc_score, roc_curve
+from sklearn.metrics import (
+    average_precision_score,
+    balanced_accuracy_score,
+    brier_score_loss,
+    confusion_matrix,
+    f1_score,
+    precision_score,
+    recall_score,
+    roc_auc_score,
+    roc_curve,
+)
 from sklearn.model_selection import StratifiedKFold
 
 from hybrid_extractors import hybrid_backend_for_name, normalize_extractor_name, register_hybrid_extractors
@@ -33,10 +43,18 @@ EXTRACTION_WORKERS = 1
 DEFAULT_SLIDE_LIMIT = 18
 DEFAULT_FOLD_COUNT = 3
 DEFAULT_FEATURE_EXTRACTOR_CANDIDATES = (
-    "virchow",
-    "ctranspath",
+    "conchv1_5",
+    "phikon-v2",
+    "prov-gigapath",
+    "prism-virchow",
+    "chief-ctranspath",
+    "dinov3",
+    "midnight",
 )
 GENERIC_FEATURE_EXTRACTORS = {"resnet50_imagenet", "resnet50"}
+EXTRACTOR_PROXY_NAMES = {
+    "chief-ctranspath": "ctranspath",
+}
 DEFAULT_MIL_FALLBACKS = {
     "Approach1": ("transmil",),
     "Approach2": ("attention_mil",),
@@ -93,6 +111,15 @@ def requested_slide_limit(config: dict[str, Any]) -> int:
 
 def requested_n_folds(config: dict[str, Any]) -> int:
     return max(2, int(config["request"].get("n_folds", DEFAULT_FOLD_COUNT)))
+
+
+def requested_external_cohorts(config: dict[str, Any]) -> list[dict[str, Any]]:
+    value = config["request"].get("external_cohorts")
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, dict)]
+    return []
 
 
 def requested_feature_extractors(config: dict[str, Any]) -> list[str]:
@@ -651,6 +678,7 @@ def build_extractor(
     normalized_candidates = parse_candidate_list([normalize_extractor_name(name) for name in candidates])
     for name in normalized_candidates:
         try:
+            actual_name = EXTRACTOR_PROXY_NAMES.get(name, name)
             backend = requested_backend
             inferred = hybrid_backend_for_name(name)
             if backend == "auto":
@@ -658,11 +686,11 @@ def build_extractor(
             kwargs = {"resize": True, "mixed_precision": True}
             if backend == "hybrid":
                 kwargs["hf_token"] = hf_token
-            elif name == "virchow" and virchow_weights:
+            elif actual_name == "virchow" and virchow_weights:
                 kwargs["weights"] = virchow_weights
-            if name == "resnet50_imagenet":
+            if actual_name == "resnet50_imagenet":
                 kwargs["tile_px"] = TILE_PX
-            return sf.build_feature_extractor(name, **kwargs), name, backend
+            return sf.build_feature_extractor(actual_name, **kwargs), name, backend, actual_name
         except Exception as exc:
             errors[name] = f"{type(exc).__name__}: {exc}"
             continue
@@ -742,6 +770,7 @@ def prepare_bundle_for_training(config: dict[str, Any]) -> dict[str, Any]:
     bags_by_extractor: dict[str, str] = {}
     approach_payloads: dict[str, dict[str, Any]] = {}
     approach_extractors: dict[str, str] = {}
+    resolved_approach_extractors: dict[str, str] = {}
     approach_backends: dict[str, str] = {}
     default_virchow_weights = requested_virchow_weights(config)
     hf_token = requested_hf_token(config)
@@ -749,7 +778,7 @@ def prepare_bundle_for_training(config: dict[str, Any]) -> dict[str, Any]:
     for spec in config["specs"]:
         approach_label = str(spec["approach_label"])
         spec_candidates = requested_feature_extractors_for_spec(config, spec, feature_candidates)
-        extractor, extractor_name, extractor_backend = build_extractor(
+        extractor, extractor_name, extractor_backend, resolved_extractor_name = build_extractor(
             sf,
             spec_candidates,
             str(spec.get("virchow_weights") or default_virchow_weights or ""),
@@ -768,10 +797,12 @@ def prepare_bundle_for_training(config: dict[str, Any]) -> dict[str, Any]:
         approach_payloads[approach_label] = {
             "feature_extractor_candidates": spec_candidates,
             "feature_extractor_used": extractor_name,
+            "resolved_feature_extractor_used": resolved_extractor_name,
             "extractor_backend": extractor_backend,
             "bags_dir": bags_by_extractor[extractor_name],
         }
         approach_extractors[approach_label] = extractor_name
+        resolved_approach_extractors[approach_label] = resolved_extractor_name
         approach_backends[approach_label] = extractor_backend
 
     prepared = {
@@ -780,10 +811,12 @@ def prepare_bundle_for_training(config: dict[str, Any]) -> dict[str, Any]:
         "feature_extractor_used": next(iter(bags_by_extractor)) if len(bags_by_extractor) == 1 else "multiple",
         "feature_extractor_candidates": feature_candidates,
         "feature_extractors_by_approach": approach_extractors,
+        "resolved_feature_extractors_by_approach": resolved_approach_extractors,
         "extractor_backends_by_approach": approach_backends,
         "approach_execution_mode": execution_mode,
         "approaches": approach_payloads,
         "n_folds": int(subset["n_folds"]),
+        "external_cohorts": requested_external_cohorts(config),
     }
     write_json(bundle_root / "prepared_bundle.json", prepared)
     return prepared
@@ -845,6 +878,21 @@ def best_f1_threshold(y_true: np.ndarray, y_score: np.ndarray) -> tuple[float, f
     return best_threshold, best_f1, best_pos_rate
 
 
+def bootstrap_mean_ci(values: list[float], *, seed: int = 310, rounds: int = 2000) -> tuple[float | None, float | None]:
+    clean = [float(value) for value in values if value is not None]
+    if not clean:
+        return None, None
+    if len(clean) == 1:
+        return clean[0], clean[0]
+    rng = np.random.default_rng(seed)
+    sample_size = len(clean)
+    sampled_means = [
+        float(np.mean(rng.choice(clean, size=sample_size, replace=True)))
+        for _ in range(rounds)
+    ]
+    return float(np.percentile(sampled_means, 2.5)), float(np.percentile(sampled_means, 97.5))
+
+
 def read_table(path: Path) -> pd.DataFrame:
     if path.suffix == ".parquet":
         return pd.read_parquet(path)
@@ -877,20 +925,35 @@ def aggregate_approach(bundle_root: Path, spec: dict[str, Any], exp_label: str) 
             continue
         y_score = df[score_col].to_numpy()
         fold_auc = float(roc_auc_score(y_true, y_score))
+        fold_auprc = float(average_precision_score(y_true, y_score))
         default_pred = (y_score >= 0.5).astype(int)
         tuned_threshold, tuned_f1, tuned_pos_rate = best_f1_threshold(y_true, y_score)
         y_pred = (y_score >= tuned_threshold).astype(int)
+        tn, fp, fn, tp = confusion_matrix(y_true, y_pred, labels=[0, 1]).ravel()
+        specificity = float(tn / (tn + fp)) if (tn + fp) else 0.0
+        recall_msi_h = float(recall_score(y_true, y_pred, zero_division=0))
+        precision_msi_h = float(precision_score(y_true, y_pred, zero_division=0))
         rows.append(
             {
                 "file": str(path),
                 "score_column": score_col,
                 "n": int(len(df)),
                 "auroc": fold_auc,
+                "auprc": fold_auprc,
                 "f1_macro": tuned_f1,
                 "f1_macro_default_threshold": float(f1_score(y_true, default_pred, average="macro")),
+                "balanced_accuracy": float(balanced_accuracy_score(y_true, y_pred)),
+                "precision": precision_msi_h,
+                "recall_msi_h": recall_msi_h,
+                "specificity": specificity,
+                "brier_score": float(brier_score_loss(y_true, y_score)),
                 "best_threshold": tuned_threshold,
                 "predicted_positive_rate": tuned_pos_rate,
                 "true_positive_rate": float(y_true.mean()) if len(y_true) else 0.0,
+                "tp": int(tp),
+                "fp": int(fp),
+                "tn": int(tn),
+                "fn": int(fn),
             }
         )
         fpr, tpr, _ = roc_curve(y_true, y_score)
@@ -900,6 +963,14 @@ def aggregate_approach(bundle_root: Path, spec: dict[str, Any], exp_label: str) 
         raise FileNotFoundError(f"No usable prediction rows found for {exp_label}")
 
     metrics_df = pd.DataFrame(rows)
+    auroc_values = [float(value) for value in metrics_df["auroc"].tolist()]
+    auroc_ci_low, auroc_ci_high = bootstrap_mean_ci(auroc_values, seed=int(spec.get("seed", 310)))
+    aggregate_confusion = {
+        "tp": int(metrics_df["tp"].sum()),
+        "fp": int(metrics_df["fp"].sum()),
+        "tn": int(metrics_df["tn"].sum()),
+        "fn": int(metrics_df["fn"].sum()),
+    }
     metrics = {
         "experiment_id": str(spec["experiment_id"]),
         "approach_label": str(spec["approach_label"]),
@@ -910,8 +981,21 @@ def aggregate_approach(bundle_root: Path, spec: dict[str, Any], exp_label: str) 
         "mean_auroc": float(metrics_df["auroc"].mean()),
         "mean_f1_macro": float(metrics_df["f1_macro"].mean()),
         "mean_f1_macro_default_threshold": float(metrics_df["f1_macro_default_threshold"].mean()),
+        "mean_auprc": float(metrics_df["auprc"].mean()),
+        "mean_balanced_accuracy": float(metrics_df["balanced_accuracy"].mean()),
+        "mean_precision": float(metrics_df["precision"].mean()),
+        "mean_recall_msi_h": float(metrics_df["recall_msi_h"].mean()),
+        "mean_specificity": float(metrics_df["specificity"].mean()),
+        "mean_brier_score": float(metrics_df["brier_score"].mean()),
         "mean_best_threshold": float(metrics_df["best_threshold"].mean()),
+        "auroc_std": float(metrics_df["auroc"].std(ddof=0)),
+        "auroc_ci_low": auroc_ci_low,
+        "auroc_ci_high": auroc_ci_high,
+        "auroc_per_fold": auroc_values,
+        "fold_metrics": metrics_df.to_dict("records"),
+        "aggregate_confusion_matrix": aggregate_confusion,
         "folds": int(len(metrics_df)),
+        "external_metrics": {},
         "artifacts": {
             "prediction_files": [str(p) for p in prediction_files],
         },
@@ -1061,7 +1145,7 @@ def ensure_feature_bags_for_approach(
         spec,
         prepared.get("feature_extractor_candidates", requested_feature_extractors(config)),
     )
-    extractor, extractor_name, _extractor_backend = build_extractor(
+    extractor, extractor_name, _extractor_backend, _resolved_extractor_name = build_extractor(
         sf,
         feature_candidates,
         requested_virchow_weights(config),
@@ -1169,6 +1253,7 @@ def train_one_approach(config: dict[str, Any], approach_label: str) -> None:
             metrics["n_folds"] = n_folds
             metrics["n_repeats"] = n_repeats
             metrics["feature_extractor_used"] = approach_payload.get("feature_extractor_used", prepared.get("feature_extractor_used"))
+            metrics["resolved_feature_extractor_used"] = approach_payload.get("resolved_feature_extractor_used")
             metrics["available_bag_slide_count"] = len(available_bag_slide_stems(bags_dir))
             metrics["missing_bag_slides"] = missing_bag_slides
             metrics_path = bundle_root / "approaches" / approach_label / "metrics.json"
@@ -1292,6 +1377,8 @@ def finalize_bundle(config: dict[str, Any], prepared: dict[str, Any], approach_p
         "feature_extractor_used": prepared["feature_extractor_used"],
         "feature_extractor_candidates": prepared.get("feature_extractor_candidates", []),
         "feature_extractors_by_approach": prepared.get("feature_extractors_by_approach", {}),
+        "resolved_feature_extractors_by_approach": prepared.get("resolved_feature_extractors_by_approach", {}),
+        "external_cohorts": prepared.get("external_cohorts", requested_external_cohorts(config)),
         "approaches": summary_view["approaches"],
         "state": summary_view["overall_state"],
         "best_approach": summary_view["best_approach"],

@@ -1,5 +1,6 @@
 import json
 import shlex
+from datetime import timedelta
 
 from django.conf import settings
 from django.db.models import Q
@@ -31,6 +32,88 @@ STATE_LABELS = {
     "spawned": "Queued",
     "training": "Training",
 }
+
+STATE_PROGRESS = {
+    "matching_annotations": 8,
+    "downloading_slides": 18,
+    "extracting_tiles": 36,
+    "retrying_tiles": 42,
+    "generating_features": 56,
+    "prepared": 64,
+    "training_parallel": 72,
+    "training": 72,
+    "completed": 100,
+    "failed": 100,
+}
+
+
+def format_duration(delta: timedelta | None) -> str:
+    if not delta:
+        return "n/a"
+    total_seconds = max(0, int(delta.total_seconds()))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    if hours:
+        return f"{hours}h {minutes}m"
+    if minutes:
+        return f"{minutes}m {seconds}s"
+    return f"{seconds}s"
+
+
+def metric_display(value, digits: int = 3) -> str:
+    if value in (None, ""):
+        return "-"
+    try:
+        return f"{float(value):.{digits}f}"
+    except (TypeError, ValueError):
+        return "-"
+
+
+def infer_run_progress(run: Run) -> tuple[int, str]:
+    if run.state in {"training_parallel", "training"} and run.total_link_count:
+        progress = 72 + int(round((run.completed_link_count / max(1, run.total_link_count)) * 24))
+        detail = f"{run.completed_link_count}/{run.total_link_count} approaches synced"
+        return min(96, progress), detail
+    base = STATE_PROGRESS.get(run.state, 0)
+    if run.state == "completed":
+        return 100, "Bundle finished"
+    if run.state == "failed":
+        return 100, "Runner needs recovery"
+    return base, run.state_display
+
+
+def infer_eta_copy(run: Run) -> str:
+    if run.state == "completed":
+        return "Completed"
+    if run.state == "failed":
+        return "Needs recovery"
+
+    elapsed = timezone.now() - run.created_at
+    if run.state in {"training_parallel", "training"} and run.completed_link_count > 0 and run.total_link_count > run.completed_link_count:
+        completed = max(1, run.completed_link_count)
+        per_approach_seconds = elapsed.total_seconds() / completed
+        remaining = run.total_link_count - run.completed_link_count
+        eta = timedelta(seconds=per_approach_seconds * remaining)
+        return f"ETA {format_duration(eta)}"
+
+    if run.state in {"extracting_tiles", "generating_features"}:
+        return "ETA stabilizes after the first synced branch"
+    if run.state in {"matching_annotations", "downloading_slides", "prepared"}:
+        return "ETA pending first runtime sync"
+    return "ETA pending"
+
+
+def build_scientific_metrics(link) -> list[dict[str, str]]:
+    return [
+        {"label": "AUROC", "value": metric_display(link.mean_auroc)},
+        {"label": "AUPRC", "value": metric_display(getattr(link, "mean_auprc", None))},
+        {"label": "Bal Acc", "value": metric_display(getattr(link, "mean_balanced_accuracy", None))},
+        {"label": "MSI-H Recall", "value": metric_display(getattr(link, "mean_recall_msi_h", None))},
+        {"label": "Specificity", "value": metric_display(getattr(link, "mean_specificity", None))},
+        {"label": "Precision", "value": metric_display(getattr(link, "mean_precision", None))},
+        {"label": "Brier", "value": metric_display(getattr(link, "mean_brier_score", None))},
+        {"label": "Threshold", "value": metric_display(getattr(link, "mean_best_threshold", None))},
+    ]
 
 
 def build_stage_copy(run: Run) -> tuple[str, str]:
@@ -166,21 +249,38 @@ def hydrate_run(run: Run, *, allow_sync_failure: bool, sync_remote: bool) -> Run
     run.best_link = None
     run.active_link = None
     run.last_sync_display = timezone.localtime(run.updated_at).strftime("%d %b %I:%M:%S %p")
+    run.elapsed_display = format_duration(timezone.now() - run.created_at)
     links = list(run.approach_links.select_related("approach_template").all())
     run.display_links = links
     for link in links:
         link.state_display = STATE_LABELS.get(link.state, link.state.replace("_", " ").title())
         link.mean_auroc_display = f"{link.mean_auroc:.3f}" if link.mean_auroc is not None else ""
         link.mean_f1_display = f"{link.mean_f1_macro:.3f}" if link.mean_f1_macro is not None else ""
+        link.mean_auprc_display = metric_display(getattr(link, "mean_auprc", None))
+        link.mean_balanced_accuracy_display = metric_display(getattr(link, "mean_balanced_accuracy", None))
+        link.mean_recall_display = metric_display(getattr(link, "mean_recall_msi_h", None))
+        link.mean_specificity_display = metric_display(getattr(link, "mean_specificity", None))
+        link.mean_precision_display = metric_display(getattr(link, "mean_precision", None))
+        link.mean_brier_display = metric_display(getattr(link, "mean_brier_score", None))
+        link.mean_threshold_display = metric_display(getattr(link, "mean_best_threshold", None))
+        link.available_bag_slide_count_display = getattr(link, "available_bag_slide_count", None) or "-"
+        link.missing_bag_slide_count = len(getattr(link, "missing_bag_slides", []) or [])
+        link.chart_score_pct = max(2, min(100, int(round((link.mean_auroc or 0.0) * 100)))) if link.mean_auroc is not None else 6
     completed_links = [link for link in links if link.mean_auroc is not None]
     if completed_links:
         run.best_link = max(completed_links, key=lambda item: item.mean_auroc or 0.0)
+        run.best_link.scientific_metrics = build_scientific_metrics(run.best_link)
+    else:
+        run.best_link = None
     run.active_link = next((link for link in links if link.state in {"training", "spawned"}), None)
     run.total_link_count = len(links)
     run.completed_link_count = sum(1 for link in links if link.state == "completed")
     run.failed_link_count = sum(1 for link in links if link.state == "failed")
     run.running_link_count = sum(1 for link in links if link.state in {"training", "spawned"})
     run.pending_link_count = max(0, run.total_link_count - run.completed_link_count - run.failed_link_count - run.running_link_count)
+    run.progress_percent, run.progress_detail = infer_run_progress(run)
+    run.eta_display = infer_eta_copy(run)
+    run.external_cohort_count = len(getattr(run, "external_cohorts", []) or [])
     run.stage_title, run.stage_detail = build_stage_copy(run)
     return run
 
@@ -188,6 +288,7 @@ def hydrate_run(run: Run, *, allow_sync_failure: bool, sync_remote: bool) -> Run
 def dashboard(request: HttpRequest) -> HttpResponse:
     summary = dashboard_summary()
     live_runs = hydrate_live_runs(sync_remote=False)
+    recent_runs = hydrate_recent_runs(sync_remote=False, limit=8)
     milestone_items = build_milestone_items(live_runs)
     initial_tab = "history" if request.GET.get("tab") == "history" else "live"
     history_runs = hydrate_history_runs() if initial_tab == "history" else []
@@ -196,7 +297,7 @@ def dashboard(request: HttpRequest) -> HttpResponse:
         "summary": summary,
         "approach_slots": build_approach_slots(),
         "chart_json": json.dumps(summary["chart"]),
-        "recent_runs": live_runs[:6],
+        "recent_runs": recent_runs,
         "live_runs": live_runs,
         "history_runs": history_runs,
         "archive_records": archive_records,
@@ -263,12 +364,13 @@ def history_partial(request: HttpRequest) -> HttpResponse:
 def history_page(request: HttpRequest) -> HttpResponse:
     summary = dashboard_summary()
     live_runs = hydrate_live_runs(sync_remote=False)
+    recent_runs = hydrate_recent_runs(sync_remote=False, limit=12)
     milestone_items = build_milestone_items(live_runs)
     context = {
         "summary": summary,
         "approach_slots": build_approach_slots(),
         "chart_json": json.dumps(summary["chart"]),
-        "recent_runs": live_runs[:6],
+        "recent_runs": recent_runs,
         "live_runs": live_runs,
         "history_runs": hydrate_history_runs(limit=30),
         "archive_records": BatchArchive.objects.order_by("-updated_at")[:20],
@@ -282,15 +384,28 @@ def history_page(request: HttpRequest) -> HttpResponse:
 
 @require_POST
 def launch_run(request: HttpRequest) -> HttpResponse:
+    external_cohorts_text = request.POST.get("external_cohorts_json", "").strip()
+    try:
+        external_cohorts = json.loads(external_cohorts_text) if external_cohorts_text else []
+    except json.JSONDecodeError:
+        external_cohorts = []
     payload = {
-        "experiment_name": request.POST.get("experiment_name") or "tcga3-vm-200x10f-virchow-retccl-ctranspath-256tiles",
+        "experiment_name": request.POST.get("experiment_name") or "tcga3-hybrid-02-200x10f-conch15-phikonv2-gigapath-prism-chief-dinov3-midnight-256tiles",
         "source_uri": request.POST.get("source_uri") or "gs://wsi_aiml_repo/TCGA/TCGA_COAD/TCGA_COAD",
         "annotations_csv": request.POST.get("annotations_csv") or "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/django_rebuild_cleaned_msi/runtime/annotations/tcga3_vm_annotations.csv",
         "requested_slide_limit": int(request.POST.get("requested_slide_limit") or 200),
         "n_folds": int(request.POST.get("n_folds") or 10),
         "n_repeats": int(request.POST.get("n_repeats") or 1),
         "max_tiles_per_slide": int(request.POST.get("max_tiles_per_slide") or 256),
-        "feature_extractor_candidates": [item.strip() for item in (request.POST.get("feature_extractors") or "virchow,retccl,ctranspath").split(",") if item.strip()],
+        "feature_extractor_candidates": [
+            item.strip()
+            for item in (
+                request.POST.get("feature_extractors")
+                or "conchv1_5,phikon-v2,prov-gigapath,prism-virchow,chief-ctranspath,dinov3,midnight"
+            ).split(",")
+            if item.strip()
+        ],
+        "external_cohorts": external_cohorts,
         "approaches": [slot["key"] for slot in settings.MSI_DEFAULT_APPROACHES],
         "n8n_webhook_url": request.POST.get("n8n_webhook_url") or "",
     }
@@ -310,11 +425,20 @@ def hydrate_live_runs(sync_remote: bool = True):
     return hydrated_runs
 
 
+def hydrate_recent_runs(sync_remote: bool = False, limit: int = 8):
+    runs = list(Run.objects.order_by("-updated_at")[:limit])
+    hydrated_runs = []
+    for run in runs:
+        hydrated = hydrate_run(run, allow_sync_failure=True, sync_remote=sync_remote)
+        if hydrated is not None:
+            hydrated_runs.append(hydrated)
+    return hydrated_runs
+
+
 def hydrate_history_runs(limit: int = 16):
     terminal = Q(state__in=["completed", "failed"])
-    older_with_paths = Q(remote_status_path__startswith="/") | Q(bundle_config_path__startswith="/")
     runs = list(
-        Run.objects.filter(terminal | older_with_paths)
+        Run.objects.filter(terminal)
         .order_by("-updated_at")[:limit]
     )
     hydrated_runs = []

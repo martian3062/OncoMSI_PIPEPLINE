@@ -15,7 +15,7 @@ def _asset_version() -> str:
 
 def app_shell(request):
     return {
-        "app_name": "MSI Control Center",
+        "app_name": "OncoMSI Hybrid-02",
         "approach_slots": build_approach_slots(),
         "asset_version": _asset_version(),
     }

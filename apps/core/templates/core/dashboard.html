@@ -38,7 +38,7 @@
       {% csrf_token %}
       <label>
         <span>Experiment Name</span>
-        <input type="text" name="experiment_name" value="tcga3-vm-200x10f-virchow-retccl-ctranspath-256tiles">
+        <input type="text" name="experiment_name" value="tcga3-hybrid-02-200x10f-conch15-phikonv2-gigapath-prism-chief-dinov3-midnight-256tiles">
       </label>
       <label>
         <span>Bucket URI</span>
@@ -66,7 +66,11 @@
       </label>
       <label>
         <span>Feature Extractors</span>
-        <input type="text" name="feature_extractors" value="virchow,retccl,ctranspath">
+        <input type="text" name="feature_extractors" value="conchv1_5,phikon-v2,prov-gigapath,prism-virchow,chief-ctranspath,dinov3,midnight">
+      </label>
+      <label>
+        <span>External Cohorts JSON</span>
+        <input type="text" name="external_cohorts_json" placeholder='[{"name":"CPTAC-COAD","annotations_csv":"/path/to/cptac.csv","source_uri":"gs://bucket/cohort"}]'>
       </label>
       <label>
         <span>Optional n8n Webhook URL</span>
@@ -119,31 +123,44 @@
       <span>{{ recent_runs|length }} shown</span>
     </div>
     <div class="table-wrap">
-      <table>
+      <table class="runs-matrix">
         <thead>
           <tr>
             <th>Run</th>
             <th>State</th>
             <th>Slides</th>
             <th>Extractor</th>
+            <th>Progress</th>
             <th>Approaches</th>
+            <th>Updated</th>
           </tr>
         </thead>
         <tbody>
           {% for run in recent_runs %}
           <tr>
-            <td>
+            <td class="run-col">
               <strong>{{ run.run_id }}</strong>
               <div class="muted">{{ run.experiment_name }}</div>
             </td>
-            <td>{{ run.state_display|default:run.state }}</td>
+            <td>
+              <span class="status-pill {% if run.state == 'completed' %}status-pill-complete{% elif run.state == 'failed' %}status-pill-failed{% endif %}">
+                {{ run.state_display|default:run.state }}
+              </span>
+            </td>
             <td>{{ run.selected_slide_display|default:run.requested_slide_limit }}</td>
             <td>{{ run.extractor_display|default:run.feature_extractor_used|default:"pending" }}</td>
-            <td>{{ run.approach_links.count }}</td>
+            <td>
+              <div class="progress-cell">
+                <strong>{{ run.progress_percent }}%</strong>
+                <span class="muted">{{ run.progress_detail }}</span>
+              </div>
+            </td>
+            <td>{{ run.completed_link_count }}/{{ run.total_link_count }}</td>
+            <td>{{ run.last_sync_display }}</td>
           </tr>
           {% empty %}
           <tr>
-            <td colspan="5">No runs yet.</td>
+            <td colspan="7">No runs yet.</td>
           </tr>
           {% endfor %}
         </tbody>

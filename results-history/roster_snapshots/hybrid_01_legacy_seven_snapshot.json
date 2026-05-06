@@ -1,0 +1,67 @@
+{
+  "snapshot_name": "hybrid_01_legacy_seven_snapshot",
+  "created_from_run": "run-c167be196bac",
+  "created_from_path": "results-history/vm-results-history-2026-05-06/results-history/run-c167be196bac/final_summary.json",
+  "notes": [
+    "Preserved before the hybrid-02 roster swap.",
+    "This keeps the old seven public in results-history even though the active approach catalog is changing."
+  ],
+  "leaderboard": [
+    {
+      "rank": 1,
+      "approach_label": "Approach6-UNI2-H",
+      "feature_extractor_used": "uni2-h",
+      "mean_auroc": 0.9818877551020408,
+      "mean_f1_macro": 0.9660331825037707,
+      "folds": 10
+    },
+    {
+      "rank": 2,
+      "approach_label": "Approach5-Virchow2",
+      "feature_extractor_used": "virchow2",
+      "mean_auroc": 0.9683673469387755,
+      "mean_f1_macro": 0.938807907778496,
+      "folds": 10
+    },
+    {
+      "rank": 3,
+      "approach_label": "Approach7-H-Optimus-0",
+      "feature_extractor_used": "h-optimus-0",
+      "mean_auroc": 0.959438775510204,
+      "mean_f1_macro": 0.9452000884353826,
+      "folds": 10
+    },
+    {
+      "rank": 4,
+      "approach_label": "Approach2-RetCCL",
+      "feature_extractor_used": "retccl",
+      "mean_auroc": 0.9443877551020409,
+      "mean_f1_macro": 0.9114361129067012,
+      "folds": 10
+    },
+    {
+      "rank": 5,
+      "approach_label": "Approach4-CONCH",
+      "feature_extractor_used": "conch",
+      "mean_auroc": 0.9329081632653061,
+      "mean_f1_macro": 0.910573780794369,
+      "folds": 10
+    },
+    {
+      "rank": 6,
+      "approach_label": "Approach3-CTransPath",
+      "feature_extractor_used": "ctranspath",
+      "mean_auroc": 0.9280612244897959,
+      "mean_f1_macro": 0.9045876427494075,
+      "folds": 10
+    },
+    {
+      "rank": 7,
+      "approach_label": "Approach1-Virchow",
+      "feature_extractor_used": "virchow",
+      "mean_auroc": 0.926530612244898,
+      "mean_f1_macro": 0.8914940206851973,
+      "folds": 10
+    }
+  ]
+}

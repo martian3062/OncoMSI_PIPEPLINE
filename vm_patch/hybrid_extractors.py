@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import os
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -10,22 +11,47 @@ from timm import create_model
 from timm.data import create_transform, resolve_data_config
 from timm.layers import SwiGLUPacked
 from torchvision import transforms
+from transformers import AutoImageProcessor, AutoModel
 
 
 HYBRID_EXTRACTOR_ALIASES = {
     "conch": "conch",
+    "conch-v1.5": "conchv1_5",
+    "conch-v15": "conchv1_5",
+    "conch_v1_5": "conchv1_5",
+    "conchv1.5": "conchv1_5",
+    "conchv15": "conchv1_5",
+    "conchv1_5": "conchv1_5",
     "virchow2": "virchow2",
     "uni2-h": "uni2-h",
     "uni2h": "uni2-h",
     "h-optimus-0": "h-optimus-0",
     "h_optimus_0": "h-optimus-0",
+    "phikon-v2": "phikon-v2",
+    "phikon_v2": "phikon-v2",
+    "prov-gigapath": "prov-gigapath",
+    "prov_gigapath": "prov-gigapath",
+    "prism": "prism-virchow",
+    "prism-virchow": "prism-virchow",
+    "prism_virchow": "prism-virchow",
+    "dinov3": "dinov3",
+    "dino-v3": "dinov3",
+    "dino_v3": "dinov3",
+    "midnight": "midnight",
+    "midnight-12k": "midnight",
 }
 
 HYBRID_EXTRACTOR_NAMES = {
     "conch",
+    "conchv1_5",
     "virchow2",
     "uni2-h",
     "h-optimus-0",
+    "phikon-v2",
+    "prov-gigapath",
+    "prism-virchow",
+    "dinov3",
+    "midnight",
 }
 
 _REGISTERED = False
@@ -48,28 +74,46 @@ class _ConchImageEncoder(nn.Module):
         return self.model.encode_image(image, proj_contrast=False, normalize=False)
 
 
-class _Virchow2ImageEncoder(nn.Module):
-    def __init__(self, model: nn.Module):
+class _ForwardImageEncoder(nn.Module):
+    def __init__(
+        self,
+        model: nn.Module,
+        *,
+        forward_kind: str = "tensor",
+        pool: str = "cls",
+        patch_token_offset: int = 1,
+    ):
         super().__init__()
         self.model = model
+        self.forward_kind = forward_kind
+        self.pool = pool
+        self.patch_token_offset = patch_token_offset
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
-        output = self.model(image)
+        if self.forward_kind == "pixel_values":
+            output = self.model(pixel_values=image)
+        else:
+            output = self.model(image)
         if isinstance(output, (tuple, list)):
             output = output[0]
+        if hasattr(output, "last_hidden_state"):
+            output = output.last_hidden_state
         if output.ndim == 2:
             return output
         if output.ndim != 3:
-            raise RuntimeError(f"Virchow2 encoder returned unexpected shape: {tuple(output.shape)}")
-        class_token = output[:, 0]
-        patch_tokens = output[:, 5:] if output.shape[1] > 5 else output[:, 1:]
+            raise RuntimeError(f"Extractor returned unexpected shape: {tuple(output.shape)}")
+
+        cls_token = output[:, 0]
+        patch_tokens = output[:, self.patch_token_offset :] if output.shape[1] > self.patch_token_offset else output[:, 1:]
+        if self.pool == "cls":
+            return cls_token
         if patch_tokens.numel() == 0:
-            features = class_token
-        else:
-            features = torch.cat([class_token, patch_tokens.mean(1)], dim=-1)
-        if features.ndim != 2:
-            raise RuntimeError(f"Virchow2 pooled features must be 2D, got {tuple(features.shape)}")
-        return features
+            return cls_token
+        if self.pool == "mean":
+            return patch_tokens.mean(1)
+        if self.pool == "cls_mean":
+            return torch.cat([cls_token, patch_tokens.mean(1)], dim=-1)
+        raise RuntimeError(f"Unsupported pooling mode: {self.pool}")
 
 
 class _TensorFriendlyTransform:
@@ -122,6 +166,28 @@ def _configure_hf_token(hf_token: str | None) -> str | None:
     return token
 
 
+def _build_processor_transform(
+    model_id: str,
+    *,
+    trust_remote_code: bool = False,
+) -> _TensorFriendlyTransform:
+    processor = AutoImageProcessor.from_pretrained(model_id, trust_remote_code=trust_remote_code)
+    size = getattr(processor, "size", {}) or {}
+    crop_size = int(size.get("height") or size.get("width") or size.get("shortest_edge") or 224)
+    resize_size = int(size.get("shortest_edge") or crop_size)
+    mean = tuple(getattr(processor, "image_mean", None) or (0.5, 0.5, 0.5))
+    std = tuple(getattr(processor, "image_std", None) or (0.5, 0.5, 0.5))
+    pipeline = transforms.Compose(
+        [
+            transforms.Resize(resize_size),
+            transforms.CenterCrop((crop_size, crop_size)),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=mean, std=std),
+        ]
+    )
+    return _TensorFriendlyTransform(pipeline)
+
+
 def _build_virchow2(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]]:
     _configure_hf_token(hf_token)
     model = create_model(
@@ -132,7 +198,19 @@ def _build_virchow2(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]
         act_layer=torch.nn.SiLU,
     )
     transform = create_transform(**resolve_data_config(model.pretrained_cfg, model=model))
-    return _Virchow2ImageEncoder(model), _TensorFriendlyTransform(transform)
+    return _ForwardImageEncoder(model, pool="cls_mean", patch_token_offset=5), _TensorFriendlyTransform(transform)
+
+
+def _build_prism_virchow(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]]:
+    _configure_hf_token(hf_token)
+    model = create_model(
+        "hf-hub:paige-ai/Virchow",
+        pretrained=True,
+        mlp_layer=SwiGLUPacked,
+        act_layer=torch.nn.SiLU,
+    )
+    transform = create_transform(**resolve_data_config(model.pretrained_cfg, model=model))
+    return _ForwardImageEncoder(model, pool="cls_mean", patch_token_offset=1), _TensorFriendlyTransform(transform)
 
 
 def _build_uni2_h(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]]:
@@ -197,11 +275,75 @@ def _build_conch(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]]:
     return _ConchImageEncoder(model), _TensorFriendlyTransform(preprocess)
 
 
+def _build_conchv1_5(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]]:
+    _configure_hf_token(hf_token)
+    model = create_model(
+        "hf-hub:MahmoodLab/conchv1_5",
+        pretrained=True,
+        num_classes=0,
+    )
+    transform = create_transform(**resolve_data_config(model.pretrained_cfg, model=model))
+    return _ForwardImageEncoder(model, pool="cls"), _TensorFriendlyTransform(transform)
+
+
+def _build_phikon_v2(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]]:
+    _configure_hf_token(hf_token)
+    model = AutoModel.from_pretrained("owkin/phikon-v2")
+    transform = _build_processor_transform("owkin/phikon-v2")
+    return _ForwardImageEncoder(model, forward_kind="pixel_values", pool="cls"), transform
+
+
+def _build_prov_gigapath(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]]:
+    _configure_hf_token(hf_token)
+    model = create_model(
+        "hf-hub:prov-gigapath/prov-gigapath",
+        pretrained=True,
+        num_classes=0,
+    )
+    transform = transforms.Compose(
+        [
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+        ]
+    )
+    return _ForwardImageEncoder(model, pool="cls"), _TensorFriendlyTransform(transform)
+
+
+def _build_dinov3(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]]:
+    _configure_hf_token(hf_token)
+    model_id = "facebook/dinov3-vitl16-pretrain-lvd1689m"
+    model = AutoModel.from_pretrained(model_id)
+    transform = _build_processor_transform(model_id)
+    return _ForwardImageEncoder(model, forward_kind="pixel_values", pool="cls"), transform
+
+
+def _build_midnight(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]]:
+    _configure_hf_token(hf_token)
+    model = AutoModel.from_pretrained("kaiko-ai/midnight")
+    transform = transforms.Compose(
+        [
+            transforms.Resize(224),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5)),
+        ]
+    )
+    return _ForwardImageEncoder(model, forward_kind="pixel_values", pool="cls_mean"), _TensorFriendlyTransform(transform)
+
+
 SPECS = {
+    "conch": ExtractorSpec("conch", 512, _build_conch),
+    "conchv1_5": ExtractorSpec("conchv1_5", None, _build_conchv1_5, aliases=("conch-v1.5", "conch-v15", "conchv1.5")),
     "virchow2": ExtractorSpec("virchow2", 2560, _build_virchow2),
+    "prism-virchow": ExtractorSpec("prism-virchow", 2560, _build_prism_virchow, aliases=("prism",)),
     "uni2-h": ExtractorSpec("uni2-h", 1536, _build_uni2_h, aliases=("uni2h",)),
     "h-optimus-0": ExtractorSpec("h-optimus-0", 1536, _build_h_optimus_0, aliases=("h_optimus_0",)),
-    "conch": ExtractorSpec("conch", 512, _build_conch),
+    "phikon-v2": ExtractorSpec("phikon-v2", 1024, _build_phikon_v2, aliases=("phikon_v2",)),
+    "prov-gigapath": ExtractorSpec("prov-gigapath", None, _build_prov_gigapath, aliases=("prov_gigapath",)),
+    "dinov3": ExtractorSpec("dinov3", 1024, _build_dinov3, aliases=("dino-v3", "dino_v3")),
+    "midnight": ExtractorSpec("midnight", None, _build_midnight, aliases=("midnight-12k",)),
 }
 
 
@@ -228,7 +370,7 @@ def register_hybrid_extractors(sf, hf_token: str | None = None) -> None:
                 self.model.eval()
                 self.transform = transform
                 self.preprocess_kwargs = {"standardize": False}
-                self.num_features = spec.num_features
+                self.num_features = spec.num_features or getattr(model, "num_features", None)
 
             def dump_config(self):
                 return self._dump_config(

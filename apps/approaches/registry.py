@@ -35,6 +35,8 @@ def sync_default_approaches() -> None:
 
 
 def build_approach_slots():
+    # Keep database-backed labels aligned with the current configured roster.
+    sync_default_approaches()
     slots = list(ApproachTemplate.objects.filter(is_active=True).order_by("key"))
     if slots:
         return slots

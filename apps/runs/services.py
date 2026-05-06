@@ -4,7 +4,7 @@ from django.conf import settings
 
 import plotly.graph_objects as go
 
-from apps.approaches.registry import build_approach_slots, build_launch_slots
+from apps.approaches.registry import build_approach_slots, build_launch_slots, sync_default_approaches
 from apps.archives.models import BatchArchive
 
 from .models import Run, RunApproachLink, RunState
@@ -22,6 +22,7 @@ def create_run_from_payload(payload: dict) -> Run:
         n_folds=payload["n_folds"],
         n_repeats=payload["n_repeats"],
         max_tiles_per_slide=payload["max_tiles_per_slide"],
+        external_cohorts=payload.get("external_cohorts", []),
         feature_extractor_candidates=payload["feature_extractor_candidates"],
         feature_extractor_used=payload["feature_extractor_candidates"][0] if payload["feature_extractor_candidates"] else "",
         label_counts={"MSI-H": 0, "MSS": 0},
@@ -45,6 +46,7 @@ def create_run_from_payload(payload: dict) -> Run:
             "n_folds": run.n_folds,
             "n_repeats": run.n_repeats,
             "max_tiles_per_slide": run.max_tiles_per_slide,
+            "external_cohorts": run.external_cohorts,
             "approaches": [slot.key for slot in slots],
             "n8n_webhook_url": payload.get("n8n_webhook_url", ""),
         }

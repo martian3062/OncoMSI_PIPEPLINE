@@ -42,10 +42,14 @@ During this phase we also pushed the system beyond scaffold level:
 
 - uploaded and deployed the Django app on the pathology VM
 - integrated real TCGA bucket selection and annotation-driven matching
-- supported a 7-approach validated training layout
+- preserved the old 7-approach leaderboard as a historical baseline
+- switched the active roster to the `hybrid-02` foundation-model lineup
 - patched the remote runner pathing so training branches could restart from a
   prepared bundle instead of re-downloading slides
 - synchronized completed metrics back into the frontend
+- expanded the metric schema to store AUPRC, balanced accuracy, MSI-H recall,
+  specificity, confusion counts, fold-level variance, calibration, and
+  external validation metadata
 
 ## Why Django For This Project
 
@@ -187,6 +191,7 @@ Key fields:
 - `feature_extractor_used`
 - `tile_px`, `tile_um`, `max_tiles_per_slide`
 - `n_folds`, `n_repeats`
+- `external_cohorts`
 - `state`
 - `remote_status_path`
 - `bundle_config_path`
@@ -207,6 +212,13 @@ Key fields:
 - `trainer_params`
 - `mean_auroc`
 - `mean_f1_macro`
+- `mean_auprc`
+- `mean_balanced_accuracy`
+- `mean_recall_msi_h`
+- `mean_specificity`
+- `aggregate_confusion_matrix`
+- `auroc_per_fold`, `auroc_std`, `auroc_ci_low`, `auroc_ci_high`
+- `external_metrics`
 - `metrics_path`
 - `prediction_artifacts`
 
@@ -225,16 +237,24 @@ This stores reusable experiment templates such as:
 - default extractor
 - UI color token
 
-The current catalog includes 7 validated approach templates:
+The active `hybrid-02` catalog includes 7 approach templates:
 
-- `Approach 1 - Virchow`
-- `Approach 2 - RetCCL`
-- `Approach 3 - CTransPath`
-- `Approach 4 - CONCH`
-- `Approach 5 - Virchow2`
-- `Approach 6 - UNI2-H`
-- `Approach 7 - H-Optimus-0`
-These are the active approaches used in the current VM workflow.
+- `Approach 1 - CONCHv1.5`
+- `Approach 2 - Phikon-v2`
+- `Approach 3 - Prov-GigaPath`
+- `Approach 4 - PRISM`
+- `Approach 5 - CHIEF`
+- `Approach 6 - DINOv3`
+- `Approach 7 - Midnight-12k`
+
+Notes:
+
+- `results-history/roster_snapshots/hybrid_01_legacy_seven_snapshot.json`
+  preserves the previous `Virchow` / `RetCCL` / `CTransPath` / `CONCH` /
+  `Virchow2` / `UNI2-H` / `H-Optimus-0` leaderboard before the swap
+- `PRISM` currently runs through a PRISM-compatible `Virchow` tile path
+- `CHIEF` currently runs through a CHIEF-compatible `CTransPath` patch path
+  while the full WSI-level CHIEF head remains future work
 
 ### `VMTarget`
 
@@ -303,9 +323,9 @@ Run form submit
   -> render completed outcomes on the dashboard
 ```
 
-## Current Validated Training Run
+## Legacy Baseline
 
-The current strongest validated TCGA COAD run is:
+The strongest preserved TCGA-only baseline run is:
 
 - bundle id:
   `run-c167be196bac`
@@ -330,7 +350,7 @@ This run used:
 - max tiles per slide:
   `256`
 
-Approach layout used in the completed validated run:
+Legacy approach layout used in the preserved baseline run:
 
 - `Approach 1 - Virchow`
 - `Approach 2 - RetCCL`
@@ -363,6 +383,56 @@ Best result in the current validated run:
 - `Approach 6 - UNI2-H`
 - AUROC `0.9819`
 - F1 macro `0.9660`
+
+Important note:
+
+- this is still a TCGA-only number and is not a defensible external
+  leaderboard by itself
+- the branch now treats external validation as the top priority, because
+  published MSI work usually drops by roughly `5-10` AUROC points on
+  non-TCGA cohorts
+
+## Active hybrid-02 Direction
+
+The `hybrid-02` branch is now optimized around these goals:
+
+- replace the visible `Virchow` and `CTransPath` slots with the new roster
+- keep the old seven stored in `results-history`
+- add richer per-fold and clinical-style metrics directly to the run records
+- wire external cohort metadata into the control plane before claiming a new
+  best model
+
+The active roster now targets:
+
+- `CONCHv1.5`
+- `Phikon-v2`
+- `Prov-GigaPath`
+- `PRISM`
+- `CHIEF`
+- `DINOv3`
+- `Midnight-12k`
+
+## External Validation Policy
+
+This branch now assumes the following:
+
+1. TCGA cross-validation is only the development score.
+2. Any serious leaderboard claim must be repeated on an external cohort.
+3. `Run.external_cohorts` stores the requested external cohort configs.
+4. `RunApproachLink.external_metrics` stores cohort-specific test outputs after
+   sync.
+
+Target external cohorts:
+
+- `CPTAC-COAD`
+- `DACHS`
+- `PAIP`
+
+The intended comparison rule is simple:
+
+- train on `TCGA`
+- test on the external cohort
+- choose the winner from external metrics, not from the TCGA-only mean
 
 ## Core Runtime Files
 
@@ -556,7 +626,7 @@ JSON files, bundle roots, and VM-side script realities.
 ### ML orchestration
 
 1. Add a first-class run detail page with fold-level artifacts.
-2. Persist richer approach metrics and prediction file references.
+2. Add true external cohort execution paths beside the new metadata fields.
 3. Add callback-based sync from n8n or the runner instead of pure polling.
 
 ### Research workflow
@@ -572,8 +642,11 @@ The current platform delivers:
 - integrated production-lean dashboard
 - real VM launch and sync endpoints
 - actual TCGA bucket + annotation selection
-- completed 7-approach training orchestration with synchronized metrics
-- hybrid extractor preparation for approaches `8` and `9`
+- preserved legacy 7-approach baseline history
+- active `hybrid-02` seven-model roster defaults
+- richer synchronized metrics including AUPRC, balanced accuracy, MSI-H recall,
+  specificity, confusion counts, fold variance, calibration, and external
+  cohort placeholders
 - synchronized completed metrics on the frontend
 
 This gives the project a strong base for deeper experiment analytics,
