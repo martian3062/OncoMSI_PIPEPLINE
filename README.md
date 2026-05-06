@@ -42,7 +42,7 @@ During this phase we also pushed the system beyond scaffold level:
 
 - uploaded and deployed the Django app on the pathology VM
 - integrated real TCGA bucket selection and annotation-driven matching
-- supported a 3-approach training layout
+- supported a 7-approach validated training layout
 - patched the remote runner pathing so training branches could restart from a
   prepared bundle instead of re-downloading slides
 - synchronized completed metrics back into the frontend
@@ -69,7 +69,7 @@ and orchestration all live together.
 
 - `Django 5`
 - `Django REST Framework`
-- `SQLite` for phase 1 local/control-plane persistence
+- `SQLite` for the current control-plane persistence layer
 
 ### Frontend
 
@@ -225,11 +225,16 @@ This stores reusable experiment templates such as:
 - default extractor
 - UI color token
 
-In phase 1 we configured 3 active approach slots:
+The current catalog includes 7 validated approach templates:
 
 - `Approach 1 - Virchow`
 - `Approach 2 - RetCCL`
 - `Approach 3 - CTransPath`
+- `Approach 4 - CONCH`
+- `Approach 5 - Virchow2`
+- `Approach 6 - UNI2-H`
+- `Approach 7 - H-Optimus-0`
+These are the active approaches used in the current VM workflow.
 
 ### `VMTarget`
 
@@ -257,7 +262,7 @@ Defined in [apps/archives/models.py](./apps/archives/models.py).
 This stores imported summary information from completed archive folders and lets
 the control plane compare historical outputs later.
 
-## Default Phase 1 Runtime Shape
+## Current Runtime Shape
 
 The current system is tuned around a real pathology VM flow.
 
@@ -298,9 +303,16 @@ Run form submit
   -> render completed outcomes on the dashboard
 ```
 
-## Actual Training Setup Used In Phase 1
+## Current Validated Training Run
 
-The system was validated against a real TCGA COAD run using:
+The current strongest validated TCGA COAD run is:
+
+- bundle id:
+  `run-c167be196bac`
+- state:
+  `completed`
+
+This run used:
 
 - bucket source:
   `gs://wsi_aiml_repo/TCGA/TCGA_COAD/TCGA_COAD`
@@ -309,8 +321,8 @@ The system was validated against a real TCGA COAD run using:
 - exact selected subset:
   `150` slides
 - label mix:
-  `70 MSI-H`
-  `80 MSS`
+  `74 MSI-H`
+  `76 MSS`
 - folds:
   `10`
 - epochs:
@@ -318,27 +330,39 @@ The system was validated against a real TCGA COAD run using:
 - max tiles per slide:
   `256`
 
-Approach layout:
+Approach layout used in the completed validated run:
 
 - `Approach 1 - Virchow`
 - `Approach 2 - RetCCL`
 - `Approach 3 - CTransPath`
+- `Approach 4 - CONCH`
+- `Approach 5 - Virchow2`
+- `Approach 6 - UNI2-H`
+- `Approach 7 - H-Optimus-0`
 
-Completed metrics synchronized into Django:
+Notes:
 
-- Virchow:
-  - AUROC `0.916`
-  - F1 macro `0.904`
-- RetCCL:
-  - AUROC `0.848`
-  - F1 macro `0.843`
-- CTransPath:
-  - AUROC `0.946`
-  - F1 macro `0.919`
+- all `7` approaches above completed successfully in `run-c167be196bac`
+- `Atlas-2` and `PLUTO-4G` were dropped from the project because public
+  weights were not released, so they are not part of the active catalog
 
-Best result in the current validated phase:
+Completed metrics from `run-c167be196bac`:
 
-- `Approach 3 - CTransPath`
+| Approach | Extractor | AUROC | F1 macro | Best threshold |
+| --- | --- | ---: | ---: | ---: |
+| Approach 1 - Virchow | `virchow` | `0.9265` | `0.8915` | `0.4605` |
+| Approach 2 - RetCCL | `retccl` | `0.9444` | `0.9114` | `0.3997` |
+| Approach 3 - CTransPath | `ctranspath` | `0.9281` | `0.9046` | `0.4222` |
+| Approach 4 - CONCH | `conch` | `0.9329` | `0.9106` | `0.4131` |
+| Approach 5 - Virchow2 | `virchow2` | `0.9684` | `0.9388` | `0.3612` |
+| Approach 6 - UNI2-H | `uni2-h` | `0.9819` | `0.9660` | `0.3940` |
+| Approach 7 - H-Optimus-0 | `h-optimus-0` | `0.9594` | `0.9452` | `0.3003` |
+
+Best result in the current validated run:
+
+- `Approach 6 - UNI2-H`
+- AUROC `0.9819`
+- F1 macro `0.9660`
 
 ## Core Runtime Files
 
@@ -400,7 +424,7 @@ Holds:
 
 - `POST /api/archives/sync-latest/`
 
-These APIs are intentionally small in phase 1. The main control surface is the
+These APIs are intentionally small. The main control surface is the
 Django UI, with API routes supporting automation, debugging, and remote ops.
 
 ## Frontend Philosophy
@@ -445,7 +469,7 @@ VM_SSH_USER=pardeep
 VM_SSH_HOST=34.59.145.240
 VM_SSH_KEY_PATH=C:\Users\<you>\.ssh\evolet_rsa
 VM_CONDA_ENV=pathology310
-VM_RUNNER_PYTHON=/opt/miniforge3/envs/pathology310/bin/python
+VM_RUNNER_PYTHON=/home/pardeep/.venvs/pathology310-hybrid/bin/python
 VM_PROJECT_ROOT=/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc
 VM_RUNNER_SCRIPT=/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/scripts/run_tcga_coad_automated_triad.py
 VM_DEFAULT_ANNOTATIONS=annotations/tcga_coad_bucket_annotations_final_all3_live_dx1.csv
@@ -473,7 +497,8 @@ Open:
 
 ## VM Deployment Notes
 
-Phase 1 was deployed to the pathology VM and validated there.
+The current Django control plane is deployed to the pathology VM and validated
+there.
 
 The live dashboard endpoint used during validation:
 
@@ -481,7 +506,7 @@ The live dashboard endpoint used during validation:
 
 Important note:
 
-- this repository still runs with `DEBUG=True` and SQLite in phase 1
+- this repository still runs with `DEBUG=True` and SQLite
 - it is production-lean for an internal research platform, not yet a hardened
   internet-facing deployment
 
@@ -511,7 +536,7 @@ files and normalized into Django.
 The system was adapted to the actual pathology runner contract, including remote
 JSON files, bundle roots, and VM-side script realities.
 
-## Known Phase 1 Limits
+## Current Limits
 
 - database is SQLite, not PostgreSQL yet
 - no job queue like Celery or Temporal yet
@@ -540,16 +565,17 @@ JSON files, bundle roots, and VM-side script realities.
 2. Add archive comparison and leaderboard views.
 3. Add upload-to-predict workflow paths beside train-time orchestration.
 
-## Phase 1 Summary
+## Current Summary
 
-Phase 1 delivered a real modular Django MSI platform with:
+The current platform delivers:
 
 - integrated production-lean dashboard
 - real VM launch and sync endpoints
 - actual TCGA bucket + annotation selection
-- 3-approach training orchestration
+- completed 7-approach training orchestration with synchronized metrics
+- hybrid extractor preparation for approaches `8` and `9`
 - synchronized completed metrics on the frontend
-- GitHub versioned source under the `phase1` commit
 
-This gives us a strong base for phase 2: deeper experiment analytics,
-production hardening, and richer automation around the pathology runner.
+This gives the project a strong base for deeper experiment analytics,
+production hardening, archive comparison, and future expansion into additional
+foundation models.

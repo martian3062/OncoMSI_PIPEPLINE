@@ -1,0 +1,1 @@
+from pathology_foundation_models.dataset.cached_embedding import EmbeddingCache

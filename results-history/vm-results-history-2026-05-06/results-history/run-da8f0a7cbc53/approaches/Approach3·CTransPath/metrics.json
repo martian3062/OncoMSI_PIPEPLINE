@@ -1,0 +1,36 @@
+{
+  "approach_label": "Approach3\u00b7CTransPath",
+  "artifacts": {
+    "prediction_files": [
+      "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-da8f0a7cbc53/slideflow_project/mil/run-da8f0a7cbc53_run-da8f0a7cbc53_a3_approach3\u00b7ctranspath_transmil_repeat_1_fold_1/00000-run-da8f0a7cbc53_run-da8f0a7cbc53_a3_approach3\u00b7ctranspath_transmil_repeat_1_fold_1/predictions.parquet",
+      "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-da8f0a7cbc53/slideflow_project/mil/run-da8f0a7cbc53_run-da8f0a7cbc53_a3_approach3\u00b7ctranspath_transmil_repeat_1_fold_10/00000-run-da8f0a7cbc53_run-da8f0a7cbc53_a3_approach3\u00b7ctranspath_transmil_repeat_1_fold_10/predictions.parquet",
+      "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-da8f0a7cbc53/slideflow_project/mil/run-da8f0a7cbc53_run-da8f0a7cbc53_a3_approach3\u00b7ctranspath_transmil_repeat_1_fold_2/00000-run-da8f0a7cbc53_run-da8f0a7cbc53_a3_approach3\u00b7ctranspath_transmil_repeat_1_fold_2/predictions.parquet",
+      "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-da8f0a7cbc53/slideflow_project/mil/run-da8f0a7cbc53_run-da8f0a7cbc53_a3_approach3\u00b7ctranspath_transmil_repeat_1_fold_3/00000-run-da8f0a7cbc53_run-da8f0a7cbc53_a3_approach3\u00b7ctranspath_transmil_repeat_1_fold_3/predictions.parquet",
+      "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-da8f0a7cbc53/slideflow_project/mil/run-da8f0a7cbc53_run-da8f0a7cbc53_a3_approach3\u00b7ctranspath_transmil_repeat_1_fold_4/00000-run-da8f0a7cbc53_run-da8f0a7cbc53_a3_approach3\u00b7ctranspath_transmil_repeat_1_fold_4/predictions.parquet",
+      "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-da8f0a7cbc53/slideflow_project/mil/run-da8f0a7cbc53_run-da8f0a7cbc53_a3_approach3\u00b7ctranspath_transmil_repeat_1_fold_5/00000-run-da8f0a7cbc53_run-da8f0a7cbc53_a3_approach3\u00b7ctranspath_transmil_repeat_1_fold_5/predictions.parquet",
+      "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-da8f0a7cbc53/slideflow_project/mil/run-da8f0a7cbc53_run-da8f0a7cbc53_a3_approach3\u00b7ctranspath_transmil_repeat_1_fold_6/00000-run-da8f0a7cbc53_run-da8f0a7cbc53_a3_approach3\u00b7ctranspath_transmil_repeat_1_fold_6/predictions.parquet",
+      "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-da8f0a7cbc53/slideflow_project/mil/run-da8f0a7cbc53_run-da8f0a7cbc53_a3_approach3\u00b7ctranspath_transmil_repeat_1_fold_7/00000-run-da8f0a7cbc53_run-da8f0a7cbc53_a3_approach3\u00b7ctranspath_transmil_repeat_1_fold_7/predictions.parquet",
+      "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-da8f0a7cbc53/slideflow_project/mil/run-da8f0a7cbc53_run-da8f0a7cbc53_a3_approach3\u00b7ctranspath_transmil_repeat_1_fold_8/00000-run-da8f0a7cbc53_run-da8f0a7cbc53_a3_approach3\u00b7ctranspath_transmil_repeat_1_fold_8/predictions.parquet",
+      "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-da8f0a7cbc53/slideflow_project/mil/run-da8f0a7cbc53_run-da8f0a7cbc53_a3_approach3\u00b7ctranspath_transmil_repeat_1_fold_9/00000-run-da8f0a7cbc53_run-da8f0a7cbc53_a3_approach3\u00b7ctranspath_transmil_repeat_1_fold_9/predictions.parquet"
+    ]
+  },
+  "epochs": 30,
+  "experiment_id": "run-da8f0a7cbc53_a3",
+  "feature_extractor_used": "ctranspath",
+  "folds": 10,
+  "mean_auroc": 0.9459183673469388,
+  "mean_best_threshold": 0.5141391068696975,
+  "mean_f1_macro": 0.9189450010773541,
+  "mean_f1_macro_default_threshold": 0.8785251023486318,
+  "mil_model": "transmil",
+  "mil_model_candidates": [
+    "transmil"
+  ],
+  "mil_model_config_errors": {},
+  "mil_model_requested": [
+    "transmil"
+  ],
+  "n_folds": 10,
+  "n_repeats": 1,
+  "seed": 310
+}

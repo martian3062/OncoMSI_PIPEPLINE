@@ -1,0 +1,201 @@
+Metadata-Version: 2.1
+Name: pathology-foundation-models
+Version: 0.0.4
+Summary: Interface for calling foundation models for histopathology image analysis
+Home-page: https://github.com/IgorPBorja/pathology-foundation-models
+Author: Igor Borja
+Author-email: igorpradoborja@gmail.com
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Science/Research
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Topic :: Scientific/Engineering :: Artificial Intelligence
+Classifier: Topic :: Scientific/Engineering :: Image Processing
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: asttokens==3.0.0
+Requires-Dist: beautifulsoup4==4.13.4
+Requires-Dist: certifi==2025.7.14
+Requires-Dist: charset-normalizer==3.4.2
+Requires-Dist: comm==0.2.3
+Requires-Dist: debugpy==1.8.15
+Requires-Dist: decorator==5.2.1
+Requires-Dist: executing==2.2.0
+Requires-Dist: filelock==3.18.0
+Requires-Dist: fsspec==2025.7.0
+Requires-Dist: gdown==5.2.0
+Requires-Dist: hf-xet==1.1.5
+Requires-Dist: huggingface-hub==0.34.1
+Requires-Dist: idna==3.10
+Requires-Dist: iniconfig==2.1.0
+Requires-Dist: ipykernel==6.30.0
+Requires-Dist: ipython==9.4.0
+Requires-Dist: ipython-pygments-lexers==1.1.1
+Requires-Dist: ipywidgets==8.1.7
+Requires-Dist: jedi==0.19.2
+Requires-Dist: Jinja2==3.1.6
+Requires-Dist: joblib==1.5.1
+Requires-Dist: jupyter-client==8.6.3
+Requires-Dist: jupyter-core==5.8.1
+Requires-Dist: jupyterlab-widgets==3.0.15
+Requires-Dist: lightning-utilities==0.15.0
+Requires-Dist: MarkupSafe==3.0.2
+Requires-Dist: matplotlib-inline==0.1.7
+Requires-Dist: mpmath==1.3.0
+Requires-Dist: nest-asyncio==1.6.0
+Requires-Dist: networkx==3.5
+Requires-Dist: numpy==2.3.2
+Requires-Dist: nvidia-cublas-cu12==12.6.4.1
+Requires-Dist: nvidia-cuda-cupti-cu12==12.6.80
+Requires-Dist: nvidia-cuda-nvrtc-cu12==12.6.77
+Requires-Dist: nvidia-cuda-runtime-cu12==12.6.77
+Requires-Dist: nvidia-cudnn-cu12==9.5.1.17
+Requires-Dist: nvidia-cufft-cu12==11.3.0.4
+Requires-Dist: nvidia-cufile-cu12==1.11.1.6
+Requires-Dist: nvidia-curand-cu12==10.3.7.77
+Requires-Dist: nvidia-cusolver-cu12==11.7.1.2
+Requires-Dist: nvidia-cusparse-cu12==12.5.4.2
+Requires-Dist: nvidia-cusparselt-cu12==0.6.3
+Requires-Dist: nvidia-nccl-cu12==2.26.2
+Requires-Dist: nvidia-nvjitlink-cu12==12.6.85
+Requires-Dist: nvidia-nvtx-cu12==12.6.77
+Requires-Dist: packaging==25.0
+Requires-Dist: parso==0.8.4
+Requires-Dist: pexpect==4.9.0
+Requires-Dist: pillow==11.3.0
+Requires-Dist: platformdirs==4.3.8
+Requires-Dist: pluggy==1.6.0
+Requires-Dist: prompt-toolkit==3.0.51
+Requires-Dist: psutil==7.0.0
+Requires-Dist: ptyprocess==0.7.0
+Requires-Dist: pure-eval==0.2.3
+Requires-Dist: Pygments==2.19.2
+Requires-Dist: PySocks==1.7.1
+Requires-Dist: pytest==8.4.1
+Requires-Dist: python-dateutil==2.9.0.post0
+Requires-Dist: PyYAML==6.0.2
+Requires-Dist: pyzmq==27.0.0
+Requires-Dist: regex==2024.11.6
+Requires-Dist: requests==2.32.4
+Requires-Dist: safetensors==0.5.3
+Requires-Dist: scikit-learn==1.7.1
+Requires-Dist: scipy==1.16.1
+Requires-Dist: six==1.17.0
+Requires-Dist: soupsieve==2.7
+Requires-Dist: stack-data==0.6.3
+Requires-Dist: sympy==1.14.0
+Requires-Dist: threadpoolctl==3.6.0
+Requires-Dist: timm==1.0.19
+Requires-Dist: tokenizers==0.21.2
+Requires-Dist: torch==2.7.1
+Requires-Dist: torchmetrics==1.8.0
+Requires-Dist: torchvision==0.22.1
+Requires-Dist: tornado==6.5.1
+Requires-Dist: tqdm==4.67.1
+Requires-Dist: traitlets==5.14.3
+Requires-Dist: transformers==4.54.0
+Requires-Dist: triton==3.3.1
+Requires-Dist: typing-extensions==4.14.1
+Requires-Dist: urllib3==2.5.0
+Requires-Dist: wcwidth==0.2.13
+Requires-Dist: widgetsnbextension==4.0.14
+Provides-Extra: dev
+Requires-Dist: pytest>=6.0; extra == "dev"
+Requires-Dist: pytest-cov; extra == "dev"
+Requires-Dist: black; extra == "dev"
+Requires-Dist: flake8; extra == "dev"
+Requires-Dist: mypy; extra == "dev"
+Provides-Extra: notebook
+Requires-Dist: jupyter; extra == "notebook"
+Requires-Dist: ipykernel; extra == "notebook"
+Requires-Dist: ipywidgets; extra == "notebook"
+
+# Pathology foundation models
+
+Interface for calling foundation models for histopathology image analysis.
+
+## Installation
+
+To install the package in development mode:
+
+```bash
+pip install -e .
+```
+
+Or to install with development dependencies:
+
+```bash
+pip install -e ".[dev]"
+```
+
+For Jupyter notebook support:
+
+```bash
+pip install -e ".[notebook]"
+```
+
+## Loading models
+
+Models follow a common loading interface: they are all loaded from the `models.load_foundation_model` function. This function takes the following arguments:
+
+* `model_type`: either an enum instance (`models.FoundationModelEnum`) or the corresponding string value for the model type
+    - The string representation of an enum value has the same name: so `models.FoundationModelEnum.UNI` and `"UNI"` are equivalent for loading.
+* `device` (optional): where to load the model. Defaults to CPU, so be careful if inference should happen on GPU to specify this.
+* `token` (optional): HuggingFace API Token, needed for gated models. If not passed, will try to read from `HF_TOKEN` environment variable, and if this variable is not set will prompt you for the token. User access token can be found at [the tokens page on HF settings](https://huggingface.co/settings/tokens)
+
+The return type is a `models.FoundationModel`, a dataclass with the following attributes:
+
+* `model_type`: the enum instance for that model type
+* `model_source`: from where that model was installed. For now, only HuggingFace models are supported, so this will be `"hf"`
+* `model`: the model itself, a torch `nn.Module`
+* `processor`: the pre-processing transform, also a `nn.Module`
+* `device` (string): where the weights of that model are loaded
+
+## Running inference
+
+Inference should happen using the `models.extract_features` function, which supports multiple input types. It takes:
+
+* `images`: a single PIL image, a list of PIL images, a single 3d image tensor (`(3, H, W)` ), a 4D image batch tensor (`(N, 3, H, W)`)
+* `model`: a `models.FoundationModel` instance
+
+It returns a 2D tensor `(N, D)` with the features for each image, where `N` is the number of images passed and `D` the model's embedding dimension.
+
+You can get the embedding dimension for each model passing the enum instance or type string for your foundation model to the `models.get_embedding_dim` function.
+
+Another type of inference is supported through the `models.extract_features_from_dataset` function, which extract features for all images in a `torchvision.datasets.ImageFolder` dataset in a batched manner. It takes the following parameters:
+
+* `images`: `ImageFolder` dataset
+* `model`: `models.FoundationModel` instance
+* `batch_size`: number of images per batch
+* `num_workers` (optional, defaults to 4): number of workers/threads for loading images in parallel
+* `display_progress`: whether to display progress with a tqdm progress bar (see [tqdm](https://github.com/tqdm/tqdm)).
+
+## Creating embedding cache
+
+It is also possible to create an embedding cache (`dataset.EmbeddingCache` class) - which is a torch `TensorDataset` generated from a labeled image dataset (though might work with unlabeled images, but this was not tested).
+
+This dataset can be saved to a file for later use easily using the `.save` method, and created/loaded from file using the `load_from_file` method. Also, being a torch dataset, it can be used in dataloaders and standard pytorch training loops easily.
+
+Example:
+
+```python
+from pathology_foundation_models.dataset import EmbeddingCache 
+from pathology_foundation_models.models import load_foundation_model
+
+# suppose my_dataset is a torchvision.datasets.ImageFolder
+
+uni = load_foundation_model("UNI", device="cuda", token="hf_MY_TOKEN")
+embed_cache = EmbeddingCache.init_from_dataset(
+    my_dataset,
+    uni,
+    batch_size=32,
+    num_workers=4,
+    display_progress=False,
+)  # using init_from_dataset, embeddings will be on same device as model
+embed_cache.save("/path/to/my/cache.pt")
+
+copy_cache = EmbeddingCache.load_from_file("/path/to/my/cache.pt", device="cuda")   # all embeddings will be on CUDA
+```

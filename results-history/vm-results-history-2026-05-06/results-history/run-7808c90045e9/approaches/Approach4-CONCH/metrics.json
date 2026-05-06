@@ -1,0 +1,28 @@
+{
+  "approach_label": "Approach4-CONCH",
+  "artifacts": {
+    "prediction_files": [
+      "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-7808c90045e9/slideflow_project/mil/run-7808c90045e9_run-7808c90045e9_a4_approach4-conch_transmil_repeat_1_fold_1/00000-run-7808c90045e9_run-7808c90045e9_a4_approach4-conch_transmil_repeat_1_fold_1/predictions.parquet",
+      "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-7808c90045e9/slideflow_project/mil/run-7808c90045e9_run-7808c90045e9_a4_approach4-conch_transmil_repeat_1_fold_2/00000-run-7808c90045e9_run-7808c90045e9_a4_approach4-conch_transmil_repeat_1_fold_2/predictions.parquet"
+    ]
+  },
+  "epochs": 30,
+  "experiment_id": "run-7808c90045e9_a4",
+  "feature_extractor_used": "conch",
+  "folds": 2,
+  "mean_auroc": 0.6111111111111112,
+  "mean_best_threshold": 0.40919649600982666,
+  "mean_f1_macro": 0.6795634920634921,
+  "mean_f1_macro_default_threshold": 0.5095238095238095,
+  "mil_model": "transmil",
+  "mil_model_candidates": [
+    "transmil"
+  ],
+  "mil_model_config_errors": {},
+  "mil_model_requested": [
+    "transmil"
+  ],
+  "n_folds": 2,
+  "n_repeats": 1,
+  "seed": 310
+}

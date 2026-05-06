@@ -1,0 +1,49 @@
+{
+  "bags_dir": "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-a084bb5f23de/slideflow_project/bags/ctranspath_256px_128um",
+  "feature_extractor_candidates": [
+    "virchow",
+    "ctranspath"
+  ],
+  "feature_extractor_used": "ctranspath",
+  "label_counts": {
+    "MSI-H": 6,
+    "MSS": 6
+  },
+  "matched_slide_count": 426,
+  "max_negative_multiplier": null,
+  "n_folds": 2,
+  "n_repeats": 1,
+  "requested_slide_limit": 12,
+  "selected_slide_limit": 12,
+  "selected_slide_names": [
+    "TCGA-5M-AAT6-01Z-00-DX1.8834C952-14E3-4491-8156-52FC917BB014.svs",
+    "TCGA-A6-2672-01Z-00-DX1.e2a845c8-6d77-4120-9f43-abec84a66c1c.svs",
+    "TCGA-A6-2676-01Z-00-DX1.c465f6e0-b47c-48e9-bdb1-67077bb16c67.svs",
+    "TCGA-A6-2686-01Z-00-DX1.0540a027-2a0c-46c7-9af0-7b8672631de7.svs",
+    "TCGA-A6-3809-01Z-00-DX1.c26f03e8-c285-4a66-925d-ae9cba17d7b3.svs",
+    "TCGA-A6-5661-01Z-00-DX1.bad2d858-11b4-4b9c-a720-daaae592cf48.svs",
+    "TCGA-3L-AA1B-01Z-00-DX1.8923A151-A690-40B7-9E5A-FCBEDFC2394F.svs",
+    "TCGA-4N-A93T-01Z-00-DX1.82E240B1-22C3-46E3-891F-0DCE35C43F8B.svs",
+    "TCGA-4T-AA8H-01Z-00-DX1.A46C759C-74A2-4724-B6B5-DECA0D16E029.svs",
+    "TCGA-5M-AAT4-01Z-00-DX1.725C46CA-9354-43AC-AA81-3E5A66354D6B.svs",
+    "TCGA-5M-AAT5-01Z-00-DX1.548E7CEB-48FB-4037-A616-39AB025E7A73.svs",
+    "TCGA-5M-AATE-01Z-00-DX1.483FFD2F-61A1-477E-8F94-157383803FC7.svs"
+  ],
+  "selected_slide_uris": [
+    "gs://wsi_aiml_repo/TCGA/TCGA_COAD/TCGA_COAD/TCGA-5M-AAT6-01Z-00-DX1.8834C952-14E3-4491-8156-52FC917BB014.svs",
+    "gs://wsi_aiml_repo/TCGA/TCGA_COAD/TCGA_COAD/TCGA-A6-2672-01Z-00-DX1.e2a845c8-6d77-4120-9f43-abec84a66c1c.svs",
+    "gs://wsi_aiml_repo/TCGA/TCGA_COAD/TCGA_COAD/TCGA-A6-2676-01Z-00-DX1.c465f6e0-b47c-48e9-bdb1-67077bb16c67.svs",
+    "gs://wsi_aiml_repo/TCGA/TCGA_COAD/TCGA_COAD/TCGA-A6-2686-01Z-00-DX1.0540a027-2a0c-46c7-9af0-7b8672631de7.svs",
+    "gs://wsi_aiml_repo/TCGA/TCGA_COAD/TCGA_COAD/TCGA-A6-3809-01Z-00-DX1.c26f03e8-c285-4a66-925d-ae9cba17d7b3.svs",
+    "gs://wsi_aiml_repo/TCGA/TCGA_COAD/TCGA_COAD/TCGA-A6-5661-01Z-00-DX1.bad2d858-11b4-4b9c-a720-daaae592cf48.svs",
+    "gs://wsi_aiml_repo/TCGA/TCGA_COAD/TCGA_COAD/TCGA-3L-AA1B-01Z-00-DX1.8923A151-A690-40B7-9E5A-FCBEDFC2394F.svs",
+    "gs://wsi_aiml_repo/TCGA/TCGA_COAD/TCGA_COAD/TCGA-4N-A93T-01Z-00-DX1.82E240B1-22C3-46E3-891F-0DCE35C43F8B.svs",
+    "gs://wsi_aiml_repo/TCGA/TCGA_COAD/TCGA_COAD/TCGA-4T-AA8H-01Z-00-DX1.A46C759C-74A2-4724-B6B5-DECA0D16E029.svs",
+    "gs://wsi_aiml_repo/TCGA/TCGA_COAD/TCGA_COAD/TCGA-5M-AAT4-01Z-00-DX1.725C46CA-9354-43AC-AA81-3E5A66354D6B.svs",
+    "gs://wsi_aiml_repo/TCGA/TCGA_COAD/TCGA_COAD/TCGA-5M-AAT5-01Z-00-DX1.548E7CEB-48FB-4037-A616-39AB025E7A73.svs",
+    "gs://wsi_aiml_repo/TCGA/TCGA_COAD/TCGA_COAD/TCGA-5M-AATE-01Z-00-DX1.483FFD2F-61A1-477E-8F94-157383803FC7.svs"
+  ],
+  "slides_dir": "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-a084bb5f23de/slideflow_project/data/slides",
+  "split_plan": "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-a084bb5f23de/annotations/tcga_crc_msi_split_plan.csv",
+  "subset_annotations": "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-a084bb5f23de/annotations/tcga_crc_msi_annotations.csv"
+}

@@ -2,7 +2,7 @@
   id="live-runs-panel"
   class="runs-live-panel glass"
   hx-get="{% url 'live-runs-partial' %}"
-  hx-trigger="load, every 20s"
+  hx-trigger="load delay:3s, every 20s"
   hx-swap="outerHTML"
 >
   <div class="section-head">
@@ -11,7 +11,7 @@
   </div>
   <div class="live-runs-grid">
     {% for run in live_runs %}
-    <article class="live-run-card {% if run.is_complete %}live-run-card-complete{% endif %}">
+    <article class="live-run-card {% if run.is_complete %}live-run-card-complete{% endif %} {% if run.sync_error %}live-run-card-warning{% endif %}">
       <div class="section-head">
         <div>
           <strong>{{ run.experiment_name }}</strong>
@@ -19,6 +19,16 @@
         </div>
         <span class="status-pill {% if run.is_complete %}status-pill-complete{% elif run.state == 'failed' %}status-pill-failed{% endif %}">{{ run.state_display }}</span>
       </div>
+      <div class="run-stage-line">
+        <strong>{{ run.stage_title }}</strong>
+        <span class="muted">{{ run.stage_detail }}</span>
+      </div>
+      {% if run.sync_error %}
+      <div class="run-warning-strip">
+        <strong>VM sync warning</strong>
+        <span>{{ run.sync_error }}</span>
+      </div>
+      {% endif %}
       {% if run.best_link %}
       <div class="run-outcome">
         <span class="eyebrow">Best result</span>
@@ -43,6 +53,14 @@
           <p class="eyebrow">Extractor</p>
           <strong>{{ run.extractor_display }}</strong>
         </div>
+        <div>
+          <p class="eyebrow">Approaches</p>
+          <strong>{{ run.completed_link_count }}/{{ run.total_link_count }}</strong>
+        </div>
+        <div>
+          <p class="eyebrow">Running</p>
+          <strong>{{ run.running_link_count }}</strong>
+        </div>
       </div>
       <div class="approach-strip">
         {% for link in run.display_links %}
@@ -56,6 +74,7 @@
         </div>
         {% endfor %}
       </div>
+      <div class="muted small-copy">Last sync {{ run.last_sync_display }}</div>
       <div class="muted small-copy">{{ run.remote_status_path|default:"No status path yet" }}</div>
     </article>
     {% empty %}

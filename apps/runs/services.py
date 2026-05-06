@@ -4,7 +4,7 @@ from django.conf import settings
 
 import plotly.graph_objects as go
 
-from apps.approaches.registry import build_approach_slots, build_launch_slots, sync_default_approaches
+from apps.approaches.registry import build_approach_slots, build_launch_slots
 from apps.archives.models import BatchArchive
 
 from .models import Run, RunApproachLink, RunState
@@ -53,7 +53,6 @@ def create_run_from_payload(payload: dict) -> Run:
 
 
 def dashboard_summary() -> dict:
-    sync_default_approaches()
     total_runs = Run.objects.count()
     active_runs = Run.objects.exclude(state__in=[RunState.COMPLETED, RunState.FAILED]).count()
     archive_count = BatchArchive.objects.count()
@@ -63,7 +62,12 @@ def dashboard_summary() -> dict:
     )
     by_approach = Counter(link.approach_template.label for link in links)
     if not by_approach:
-        by_approach = Counter({slot.label: 0 for slot in approach_slots})
+        by_approach = Counter(
+            {
+                getattr(slot, "label", slot["label"]): 0
+                for slot in approach_slots
+            }
+        )
     figure = go.Figure(
         data=[
             go.Bar(

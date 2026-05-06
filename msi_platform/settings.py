@@ -77,6 +77,10 @@ DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.sqlite3",
         "NAME": BASE_DIR / "db.sqlite3",
+        "OPTIONS": {
+            "timeout": 30,
+            "init_command": "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=30000;",
+        },
     }
 }
 
@@ -112,7 +116,7 @@ VM_SSH_KEY_PATH = os.environ.get("VM_SSH_KEY_PATH", str(Path.home() / ".ssh" / "
 VM_CONDA_ENV = os.environ.get("VM_CONDA_ENV", "pathology310")
 VM_RUNNER_PYTHON = os.environ.get(
     "VM_RUNNER_PYTHON",
-    "/home/pardeep/.venvs/pathology310-fastai/bin/python",
+    "/home/pardeep/.venvs/pathology310-hybrid/bin/python",
 )
 VM_PROJECT_ROOT = os.environ.get(
     "VM_PROJECT_ROOT",
@@ -196,7 +200,7 @@ MSI_DEFAULT_APPROACHES = [
     },
 ]
 
-# Override the early scaffold defaults with the current 9-model experiment catalog.
+# Override the early scaffold defaults with the current validated 7-model experiment catalog.
 MSI_DEFAULT_APPROACHES = [
     {
         "key": "approach1",
@@ -336,44 +340,6 @@ MSI_DEFAULT_APPROACHES = [
             "seed": 310,
             "launch_enabled": True,
             "extractor_backend": "hybrid",
-        },
-    },
-    {
-        "key": "approach8",
-        "label": "Approach 8 - Atlas-2",
-        "model_family": "transmil",
-        "color_token": "var(--accent-lime)",
-        "default_params": {
-            "feature_extractor": "atlas-2",
-            "epochs": 30,
-            "learning_rate": 0.00004,
-            "weight_decay": 0.0001,
-            "bag_size": 160,
-            "max_val_bag_size": 160,
-            "mil_batch_size": 12,
-            "weighted_loss": True,
-            "fit_one_cycle": True,
-            "seed": 310,
-            "launch_enabled": False,
-        },
-    },
-    {
-        "key": "approach9",
-        "label": "Approach 9 - PLUTO-4G",
-        "model_family": "transmil",
-        "color_token": "var(--accent-cyan)",
-        "default_params": {
-            "feature_extractor": "pluto-4g",
-            "epochs": 30,
-            "learning_rate": 0.00004,
-            "weight_decay": 0.0001,
-            "bag_size": 160,
-            "max_val_bag_size": 160,
-            "mil_batch_size": 12,
-            "weighted_loss": True,
-            "fit_one_cycle": True,
-            "seed": 310,
-            "launch_enabled": False,
         },
     },
 ]

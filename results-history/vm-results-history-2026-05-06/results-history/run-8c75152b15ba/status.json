@@ -1,0 +1,7 @@
+{
+  "bundle_id": "run-8c75152b15ba",
+  "error": "Missing annotations CSV: /home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/runtime/annotations/tcga3_vm_annotations.csv",
+  "state": "failed",
+  "traceback": "Traceback (most recent call last):\n  File \"/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/scripts/run_tcga_coad_automated_triad.py\", line 1097, in main\n    run_all(config)\n  File \"/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/scripts/run_tcga_coad_automated_triad.py\", line 1069, in run_all\n    prepared = prepare_bundle_for_training(config)\n  File \"/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/scripts/run_tcga_coad_automated_triad.py\", line 538, in prepare_bundle_for_training\n    subset = materialize_subset(config)\n  File \"/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/scripts/run_tcga_coad_automated_triad.py\", line 333, in materialize_subset\n    raise FileNotFoundError(f\"Missing annotations CSV: {annotations_src}\")\nFileNotFoundError: Missing annotations CSV: /home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/runtime/annotations/tcga3_vm_annotations.csv\n",
+  "updated_at_epoch": 1778000545.5844872
+}

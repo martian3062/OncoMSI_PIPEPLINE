@@ -1,0 +1,34 @@
+{
+  "approach_label": "Approach7-H-Optimus-0",
+  "bundle_id": "run-7808c90045e9",
+  "metrics": {
+    "approach_label": "Approach7-H-Optimus-0",
+    "artifacts": {
+      "prediction_files": [
+        "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-7808c90045e9/slideflow_project/mil/run-7808c90045e9_run-7808c90045e9_a7_approach7-h-optimus-0_transmil_repeat_1_fold_1/00000-run-7808c90045e9_run-7808c90045e9_a7_approach7-h-optimus-0_transmil_repeat_1_fold_1/predictions.parquet",
+        "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-7808c90045e9/slideflow_project/mil/run-7808c90045e9_run-7808c90045e9_a7_approach7-h-optimus-0_transmil_repeat_1_fold_2/00000-run-7808c90045e9_run-7808c90045e9_a7_approach7-h-optimus-0_transmil_repeat_1_fold_2/predictions.parquet"
+      ]
+    },
+    "epochs": 30,
+    "experiment_id": "run-7808c90045e9_a7",
+    "feature_extractor_used": "h-optimus-0",
+    "folds": 2,
+    "mean_auroc": 0.8222222222222222,
+    "mean_best_threshold": 0.4256100058555603,
+    "mean_f1_macro": 0.7756410256410257,
+    "mean_f1_macro_default_threshold": 0.6316239316239316,
+    "mil_model": "transmil",
+    "mil_model_candidates": [
+      "transmil"
+    ],
+    "mil_model_config_errors": {},
+    "mil_model_requested": [
+      "transmil"
+    ],
+    "n_folds": 2,
+    "n_repeats": 1,
+    "seed": 310
+  },
+  "state": "completed",
+  "updated_at_epoch": 1778057590.0446773
+}

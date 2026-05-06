@@ -1,7 +1,9 @@
 {% extends "core/base.html" %}
 
 {% block content %}
-<div class="page-stack" x-data="{ open: true, tab: 'live' }">
+<div class="page-stack" x-data="{ open: true, tab: '{{ initial_tab|default:'live' }}' }">
+  {% include "core/partials/milestone_ticker.html" %}
+
   <section class="hero glass">
     <div>
       <p class="eyebrow">MSI Platform</p>
@@ -79,14 +81,34 @@
   <section class="tab-strip">
     <button type="button" class="ghost-button tab-button" :class="{ 'tab-button-active': tab === 'live' }" @click="tab = 'live'">Live</button>
     <button type="button" class="ghost-button tab-button" :class="{ 'tab-button-active': tab === 'history' }" @click="tab = 'history'">History</button>
+    <a class="ghost-button tab-link" href="{% url 'history-page' %}">Open History Page</a>
   </section>
 
   <div x-show="tab === 'live'" x-transition>
     {% include "core/partials/live_runs_panel.html" %}
   </div>
 
-  <div x-show="tab === 'history'" x-transition>
-    {% include "core/partials/history_panel.html" %}
+  <div
+    x-show="tab === 'history'"
+    x-transition
+    x-effect="if (tab === 'history' && !$el.dataset.loaded && window.htmx) { $el.dataset.loaded = 'true'; htmx.ajax('GET', '{% url 'history-partial' %}', {target: '#history-panel-shell', swap: 'innerHTML'}); }"
+    {% if initial_tab == 'history' %}data-loaded="true"{% endif %}
+  >
+    <div id="history-panel-shell">
+      {% if initial_tab == 'history' %}
+        {% include "core/partials/history_panel.html" %}
+      {% else %}
+      <section id="history-panel" class="history-panel glass">
+        <div class="section-head">
+          <h3>History</h3>
+          <span>Loads only when you open this tab</span>
+        </div>
+        <article class="history-card">
+          <p>Open the history tab to load preserved runs without background polling.</p>
+        </article>
+      </section>
+      {% endif %}
+    </div>
   </div>
 
   {% include "core/partials/metrics_panel.html" %}

@@ -8,7 +8,7 @@ from typing import Any
 from django.conf import settings
 
 from .models import VMTarget
-from .registry import ensure_default_vm_target
+from .registry import ensure_default_vm_target, get_default_vm_target
 
 
 @dataclass
@@ -19,6 +19,9 @@ class CommandResult:
 
 
 def default_vm_target() -> VMTarget:
+    existing = get_default_vm_target()
+    if existing is not None:
+        return existing
     return ensure_default_vm_target()
 
 
@@ -45,6 +48,8 @@ def run_shell(target: VMTarget, remote_command: str, timeout: int = 120) -> Comm
         proc = subprocess.run(
             ["bash", "-lc", remote_command],
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             timeout=timeout,
             check=False,
@@ -58,6 +63,8 @@ def run_shell(target: VMTarget, remote_command: str, timeout: int = 120) -> Comm
         proc = subprocess.run(
             command,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             capture_output=True,
             timeout=timeout,
             check=False,

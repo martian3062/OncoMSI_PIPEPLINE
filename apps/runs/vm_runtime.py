@@ -7,16 +7,23 @@ from django.conf import settings
 
 from apps.approaches.models import ApproachTemplate
 from apps.archives.models import BatchArchive
+from apps.vm.registry import ensure_default_vm_target
 from apps.vm.services import default_vm_target, glob_latest_json, read_json_file, run_shell, upload_text
 
 from .models import Run, RunApproachLink
 
 
-def build_bundle_config(run: Run) -> dict[str, Any]:
-    target = default_vm_target()
+def build_bundle_config(run: Run, target=None) -> dict[str, Any]:
+    target = target or default_vm_target()
     bundle_root = PurePosixPath(target.project_root) / "automation" / "tcga_slide_triads" / run.run_id
     status_path = bundle_root / "status.json"
     links = list(run.approach_links.select_related("approach_template").all())
+    hybrid_links = [
+        link for link in links
+        if str((link.trainer_params or {}).get("extractor_backend", "")).lower() == "hybrid"
+    ]
+    sequential_execution = len(links) > 4 or len(hybrid_links) > 3
+    max_parallel_approaches = 1 if sequential_execution else max(1, len(links) or 1)
     feature_extractor = ",".join(run.feature_extractor_candidates or [run.feature_extractor_used]).strip(",")
     shared = {
         "bundle_id": run.run_id,
@@ -33,7 +40,8 @@ def build_bundle_config(run: Run) -> dict[str, Any]:
         "hf_token": settings.HF_TOKEN,
         "tile_px": run.tile_px,
         "tile_um": run.tile_um,
-        "max_parallel_approaches": max(1, len(links) or 1),
+        "max_parallel_approaches": max_parallel_approaches,
+        "approach_execution_mode": "sequential" if sequential_execution else "parallel",
         "max_tiles_per_slide": run.max_tiles_per_slide,
         "mpp_override": 0.25,
         "qc_method": "otsu",
@@ -84,8 +92,8 @@ def build_bundle_config(run: Run) -> dict[str, Any]:
 
 
 def launch_run_on_vm(run: Run) -> dict[str, Any]:
-    target = default_vm_target()
-    bundle_config = build_bundle_config(run)
+    target = ensure_default_vm_target()
+    bundle_config = build_bundle_config(run, target=target)
     runtime_root = PurePosixPath(target.project_root) / "django_rebuild_cleaned_msi" / "runtime"
     bundle_root = PurePosixPath(bundle_config["bundle_root"])
     config_path = runtime_root / "bundle_configs" / f"{run.run_id}.json"
@@ -152,6 +160,7 @@ def sync_run_status(run: Run) -> dict[str, Any]:
             link.metrics_path = str(metrics_path)
             link.mean_auroc = payload.get("mean_auroc")
             link.mean_f1_macro = payload.get("mean_f1_macro")
+            link.prediction_artifacts = payload.get("artifacts", link.prediction_artifacts)
         except Exception:
             try:
                 payload = read_json_file(target, str(status_path))
@@ -159,14 +168,17 @@ def sync_run_status(run: Run) -> dict[str, Any]:
             except Exception:
                 continue
         approach_states.append(link.state)
-        link.save(update_fields=["state", "metrics_path", "mean_auroc", "mean_f1_macro", "updated_at"])
+        link.save(update_fields=["state", "metrics_path", "mean_auroc", "mean_f1_macro", "prediction_artifacts", "updated_at"])
 
     final_summary_path = PurePosixPath(run.remote_status_path).parent / "final_summary.json"
     try:
         summary = read_json_file(target, str(final_summary_path))
-        run.feature_extractor_used = summary.get("feature_extractor_used", run.feature_extractor_used)
-        run.selected_slide_count = int(summary.get("selected_slide_count", run.selected_slide_count))
-        run.label_counts = summary.get("label_counts", run.label_counts)
+        if summary.get("feature_extractor_used"):
+            run.feature_extractor_used = summary["feature_extractor_used"]
+        if summary.get("selected_slide_count") is not None:
+            run.selected_slide_count = int(summary["selected_slide_count"])
+        if summary.get("label_counts"):
+            run.label_counts = summary["label_counts"]
         run.save(update_fields=["feature_extractor_used", "selected_slide_count", "label_counts", "updated_at"])
     except Exception:
         summary = None
@@ -181,6 +193,12 @@ def sync_run_status(run: Run) -> dict[str, Any]:
         elif any(state == "spawned" for state in approach_states):
             run.state = "training_parallel"
         run.save(update_fields=["state", "updated_at"])
+
+    if not run.feature_extractor_used:
+        used = [item for item in (run.feature_extractor_candidates or []) if item]
+        if used:
+            run.feature_extractor_used = ",".join(used)
+            run.save(update_fields=["feature_extractor_used", "updated_at"])
 
     return {
         "run_id": run.run_id,

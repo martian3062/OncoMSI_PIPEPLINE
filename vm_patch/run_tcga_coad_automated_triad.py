@@ -19,7 +19,7 @@ import pandas as pd
 from sklearn.metrics import f1_score, roc_auc_score, roc_curve
 from sklearn.model_selection import StratifiedKFold
 
-from hybrid_extractors import hybrid_backend_for_name, register_hybrid_extractors
+from hybrid_extractors import hybrid_backend_for_name, normalize_extractor_name, register_hybrid_extractors
 
 TILE_PX = 256
 TILE_UM = 128
@@ -179,6 +179,15 @@ def requested_extractor_backend(config: dict[str, Any], spec: dict[str, Any]) ->
     return "slideflow"
 
 
+def requested_approach_execution_mode(config: dict[str, Any]) -> str:
+    value = str(config["request"].get("approach_execution_mode", "parallel")).strip().lower()
+    if value not in {"parallel", "sequential"}:
+        value = "parallel"
+    if int(config["request"].get("max_parallel_approaches", 2)) <= 1:
+        return "sequential"
+    return value
+
+
 def requested_mil_models(spec: dict[str, Any]) -> list[str]:
     requested = parse_candidate_list(spec.get("mil_model_candidates"))
     requested.extend(parse_candidate_list(spec.get("mil_model")))
@@ -213,6 +222,73 @@ def update_approach_status(config: dict[str, Any], approach_label: str, state: s
     write_json(status_path, payload)
 
 
+def normalized_approach_result(approach_label: str, payload: dict[str, Any]) -> dict[str, Any]:
+    mean_auroc = payload.get("mean_auroc")
+    mean_f1_macro = payload.get("mean_f1_macro")
+    state = str(payload.get("state") or "")
+    if mean_auroc is not None or mean_f1_macro is not None:
+        state = "completed"
+    elif not state:
+        state = "failed" if payload.get("error") else "pending"
+    result = {
+        **payload,
+        "approach_label": payload.get("approach_label", approach_label),
+        "state": state,
+        "mean_auroc": mean_auroc,
+        "mean_f1_macro": mean_f1_macro,
+        "mean_f1_macro_default_threshold": payload.get("mean_f1_macro_default_threshold"),
+        "feature_extractor_used": payload.get("feature_extractor_used"),
+    }
+    return result
+
+
+def summarize_approach_payloads(
+    config: dict[str, Any],
+    prepared: dict[str, Any],
+    approach_payloads: dict[str, Any],
+) -> dict[str, Any]:
+    normalized: dict[str, Any] = {}
+    for spec in config["specs"]:
+        approach_label = str(spec["approach_label"])
+        payload = approach_payloads.get(approach_label)
+        if not payload:
+            continue
+        normalized[approach_label] = normalized_approach_result(approach_label, payload)
+
+    completed = [item for item in normalized.values() if item.get("state") == "completed"]
+    failed = [item for item in normalized.values() if item.get("state") == "failed"]
+    running = [item for item in normalized.values() if item.get("state") in {"training", "spawned"}]
+
+    best_payload = None
+    if completed:
+        best_payload = max(
+            completed,
+            key=lambda item: (
+                float(item.get("mean_auroc") or float("-inf")),
+                float(item.get("mean_f1_macro") or float("-inf")),
+            ),
+        )
+
+    if running:
+        overall_state = "training_parallel"
+    elif failed:
+        overall_state = "failed"
+    elif normalized and len(completed) == len(normalized):
+        overall_state = "completed"
+    else:
+        overall_state = "prepared"
+
+    return {
+        "approaches": normalized,
+        "completed_count": len(completed),
+        "failed_count": len(failed),
+        "running_count": len(running),
+        "overall_state": overall_state,
+        "best_payload": best_payload,
+        "best_approach": best_payload.get("approach_label") if best_payload else None,
+    }
+
+
 def count_valid_tfrecords(dataset) -> int:
     valid = 0
     for path in dataset.tfrecords():
@@ -241,6 +317,32 @@ def cleanup_experiment_artifacts(sf_root: Path, exp_label: str) -> None:
             shutil.rmtree(path, ignore_errors=True)
         elif path.exists():
             path.unlink(missing_ok=True)
+
+
+def available_bag_slide_stems(bags_dir: Path) -> set[str]:
+    return {path.stem for path in bags_dir.glob("*.pt")}
+
+
+def normalize_slide_identifier(value: str) -> str:
+    text = str(value).strip()
+    if text.lower().endswith(".svs"):
+        return text[:-4]
+    return text
+
+
+def filtered_split_plan_for_bags(split_plan: Path, bags_dir: Path, out_path: Path) -> tuple[Path, list[str]]:
+    split_df = pd.read_csv(split_plan)
+    if "slide" not in split_df.columns:
+        raise ValueError("Subset annotations must include 'slide' column.")
+    available = available_bag_slide_stems(bags_dir)
+    slide_ids = split_df["slide"].astype(str).map(normalize_slide_identifier)
+    filtered = split_df.loc[slide_ids.isin(available)].copy()
+    missing = sorted(set(split_df["slide"].astype(str)) - set(filtered["slide"].astype(str)))
+    if filtered.empty:
+        raise RuntimeError(f"No slides remain after filtering split plan for available bags in {bags_dir}.")
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    filtered.to_csv(out_path, index=False)
+    return out_path, missing
 
 
 def mil_output_dir(sf_root: Path, exp_label: str, repeat: int, fold: int) -> Path:
@@ -494,7 +596,13 @@ def download_subset_slides(config: dict[str, Any], selected_slide_uris: list[str
 
 
 def import_slideflow():
-    if not os.environ.get("CONDA_PREFIX"):
+    os.environ["PYTHONNOUSERSITE"] = "1"
+    os.environ.pop("PYTHONPATH", None)
+    os.environ.pop("VIRTUAL_ENV", None)
+    preferred_conda_prefix = Path("/opt/miniforge3/envs/pathology310")
+    if preferred_conda_prefix.exists():
+        os.environ["CONDA_PREFIX"] = str(preferred_conda_prefix)
+    elif not os.environ.get("CONDA_PREFIX"):
         os.environ["CONDA_PREFIX"] = str(Path(sys.executable).resolve().parents[1])
     os.environ["SF_BACKEND"] = "torch"
     os.environ["SF_SLIDE_BACKEND"] = "cucim"
@@ -540,7 +648,8 @@ def build_extractor(
     requested_backend: str = "auto",
 ):
     errors: dict[str, str] = {}
-    for name in candidates:
+    normalized_candidates = parse_candidate_list([normalize_extractor_name(name) for name in candidates])
+    for name in normalized_candidates:
         try:
             backend = requested_backend
             inferred = hybrid_backend_for_name(name)
@@ -636,6 +745,7 @@ def prepare_bundle_for_training(config: dict[str, Any]) -> dict[str, Any]:
     approach_backends: dict[str, str] = {}
     default_virchow_weights = requested_virchow_weights(config)
     hf_token = requested_hf_token(config)
+    execution_mode = requested_approach_execution_mode(config)
     for spec in config["specs"]:
         approach_label = str(spec["approach_label"])
         spec_candidates = requested_feature_extractors_for_spec(config, spec, feature_candidates)
@@ -648,12 +758,13 @@ def prepare_bundle_for_training(config: dict[str, Any]) -> dict[str, Any]:
         )
         if extractor_name not in bags_by_extractor:
             bags_dir = bundle_root / "slideflow_project" / "bags" / f"{extractor_name}_{TILE_PX}px_{TILE_UM}um"
-            bags_dir.mkdir(parents=True, exist_ok=True)
-            project.generate_feature_bags(extractor, dataset, outdir=str(bags_dir))
-            bag_files = list(bags_dir.rglob("*"))
-            if not any(path.is_file() for path in bag_files):
-                raise RuntimeError(f"Feature bag generation completed but no bag files were written for {extractor_name}.")
             bags_by_extractor[extractor_name] = str(bags_dir)
+            if execution_mode != "sequential":
+                bags_dir.mkdir(parents=True, exist_ok=True)
+                project.generate_feature_bags(extractor, dataset, outdir=str(bags_dir))
+                bag_files = list(bags_dir.rglob("*"))
+                if not any(path.is_file() for path in bag_files):
+                    raise RuntimeError(f"Feature bag generation completed but no bag files were written for {extractor_name}.")
         approach_payloads[approach_label] = {
             "feature_extractor_candidates": spec_candidates,
             "feature_extractor_used": extractor_name,
@@ -670,6 +781,7 @@ def prepare_bundle_for_training(config: dict[str, Any]) -> dict[str, Any]:
         "feature_extractor_candidates": feature_candidates,
         "feature_extractors_by_approach": approach_extractors,
         "extractor_backends_by_approach": approach_backends,
+        "approach_execution_mode": execution_mode,
         "approaches": approach_payloads,
         "n_folds": int(subset["n_folds"]),
     }
@@ -921,10 +1033,63 @@ def build_mil_config(mil, candidate_models: list[str], spec: dict[str, Any]):
 
 
 def runner_python_executable() -> str:
-    overlay = Path("/home/pardeep/.venvs/pathology310-fastai/bin/python")
-    if overlay.exists():
-        return str(overlay)
+    hybrid = Path("/home/pardeep/.venvs/pathology310-hybrid/bin/python")
+    if hybrid.exists():
+        return str(hybrid)
+    preferred = Path("/opt/miniforge3/envs/pathology310/bin/python")
+    if preferred.exists():
+        return str(preferred)
     return sys.executable
+
+
+def ensure_feature_bags_for_approach(
+    config: dict[str, Any],
+    prepared: dict[str, Any],
+    spec: dict[str, Any],
+    approach_payload: dict[str, Any],
+    sf,
+    project,
+    dataset,
+) -> Path:
+    bags_dir = Path(str(approach_payload.get("bags_dir") or prepared["bags_dir"]))
+    existing_files = [path for path in bags_dir.rglob("*") if path.is_file()] if bags_dir.exists() else []
+    if existing_files:
+        return bags_dir
+
+    feature_candidates = approach_payload.get("feature_extractor_candidates") or requested_feature_extractors_for_spec(
+        config,
+        spec,
+        prepared.get("feature_extractor_candidates", requested_feature_extractors(config)),
+    )
+    extractor, extractor_name, _extractor_backend = build_extractor(
+        sf,
+        feature_candidates,
+        requested_virchow_weights(config),
+        hf_token=requested_hf_token(config),
+        requested_backend=requested_extractor_backend(config, spec),
+    )
+    bags_dir.parent.mkdir(parents=True, exist_ok=True)
+    bags_dir.mkdir(parents=True, exist_ok=True)
+    project.generate_feature_bags(extractor, dataset, outdir=str(bags_dir))
+    bag_files = [path for path in bags_dir.rglob("*") if path.is_file()]
+    if not bag_files:
+        raise RuntimeError(f"Feature bag generation completed but no bag files were written for {extractor_name}.")
+    return bags_dir
+
+
+def should_cleanup_bags_after_approach(prepared: dict[str, Any], approach_label: str) -> bool:
+    if prepared.get("approach_execution_mode") != "sequential":
+        return False
+    current = prepared.get("approaches", {}).get(approach_label, {})
+    current_extractor = current.get("feature_extractor_used")
+    if not current_extractor:
+        return False
+    for other_label, payload in prepared.get("approaches", {}).items():
+        if other_label == approach_label:
+            continue
+        if payload.get("feature_extractor_used") == current_extractor:
+            return False
+    return True
 
 
 def train_one_approach(config: dict[str, Any], approach_label: str) -> None:
@@ -956,7 +1121,20 @@ def train_one_approach(config: dict[str, Any], approach_label: str) -> None:
     last_error: Exception | None = None
     runtime_errors: dict[str, str] = {}
     approach_payload = prepared.get("approaches", {}).get(approach_label, {})
-    bags_dir = str(approach_payload.get("bags_dir") or prepared["bags_dir"])
+    bags_dir = ensure_feature_bags_for_approach(
+        config,
+        prepared,
+        spec,
+        approach_payload,
+        sf,
+        project,
+        dataset,
+    )
+    filtered_split_plan, missing_bag_slides = filtered_split_plan_for_bags(
+        split_plan,
+        bags_dir,
+        bundle_root / "approaches" / approach_label / "available_split_plan.csv",
+    )
     sf_root = bundle_root / "slideflow_project"
 
     for model_name in [configured_model, *[name for name in mil_candidates if name != configured_model]]:
@@ -970,7 +1148,7 @@ def train_one_approach(config: dict[str, Any], approach_label: str) -> None:
             cleanup_experiment_artifacts(sf_root, exp_label)
             for repeat in range(1, n_repeats + 1):
                 for fold in range(1, n_folds + 1):
-                    train_ds, val_ds = split_dataset(dataset, split_plan, fold, repeat=repeat)
+                    train_ds, val_ds = split_dataset(dataset, filtered_split_plan, fold, repeat=repeat)
                     outdir = mil_output_dir(sf_root, exp_label, repeat, fold)
                     if outdir.exists():
                         shutil.rmtree(outdir, ignore_errors=True)
@@ -979,7 +1157,7 @@ def train_one_approach(config: dict[str, Any], approach_label: str) -> None:
                         train_dataset=train_ds,
                         val_dataset=val_ds,
                         outcomes=OUTCOME,
-                        bags=bags_dir,
+                        bags=str(bags_dir),
                         outdir=str(outdir),
                         exp_label=f"{exp_label}_repeat_{repeat}_fold_{fold}",
                         attention_heatmaps=False,
@@ -991,9 +1169,13 @@ def train_one_approach(config: dict[str, Any], approach_label: str) -> None:
             metrics["n_folds"] = n_folds
             metrics["n_repeats"] = n_repeats
             metrics["feature_extractor_used"] = approach_payload.get("feature_extractor_used", prepared.get("feature_extractor_used"))
+            metrics["available_bag_slide_count"] = len(available_bag_slide_stems(bags_dir))
+            metrics["missing_bag_slides"] = missing_bag_slides
             metrics_path = bundle_root / "approaches" / approach_label / "metrics.json"
             write_json(metrics_path, metrics)
             update_approach_status(config, approach_label, "completed", metrics=metrics)
+            if should_cleanup_bags_after_approach(prepared, approach_label) and bags_dir.exists():
+                shutil.rmtree(bags_dir, ignore_errors=True)
             return
         except Exception as exc:
             runtime_errors[model_name] = f"{type(exc).__name__}: {exc}"
@@ -1008,39 +1190,49 @@ def train_one_approach(config: dict[str, Any], approach_label: str) -> None:
     ) from last_error
 
 
-def launch_parallel_approaches(config: dict[str, Any]) -> list[dict[str, Any]]:
+def launch_approach_process(config: dict[str, Any], spec: dict[str, Any]) -> dict[str, Any]:
     bundle_root = Path(config["bundle_root"])
-    processes: list[dict[str, Any]] = []
     python_executable = runner_python_executable()
     bundle_config_path = resolved_bundle_config_path(config)
-    for spec in config["specs"][: int(config["request"].get("max_parallel_approaches", 2))]:
-        approach_label = str(spec["approach_label"])
-        log_path = bundle_root / "approaches" / approach_label / "runner.log"
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        with log_path.open("w", encoding="utf-8") as handle:
-            process = subprocess.Popen(
-                [
-                    python_executable,
-                    str(Path(__file__).resolve()),
-                    "--bundle-config",
-                    str(bundle_config_path),
-                    "--stage",
-                    "train-approach",
-                    "--approach-label",
-                    approach_label,
-                ],
-                stdout=handle,
-                stderr=subprocess.STDOUT,
-                cwd=str(bundle_root),
-            )
-        processes.append({"approach_label": approach_label, "pid": int(process.pid)})
-        update_approach_status(config, approach_label, "spawned", pid=int(process.pid))
-    return processes
+    approach_label = str(spec["approach_label"])
+    log_path = bundle_root / "approaches" / approach_label / "runner.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("w", encoding="utf-8") as handle:
+        child_env = os.environ.copy()
+        child_env["PYTHONNOUSERSITE"] = "1"
+        child_env.pop("PYTHONPATH", None)
+        child_env.pop("VIRTUAL_ENV", None)
+        process = subprocess.Popen(
+            [
+                python_executable,
+                str(Path(__file__).resolve()),
+                "--bundle-config",
+                str(bundle_config_path),
+                "--stage",
+                "train-approach",
+                "--approach-label",
+                approach_label,
+            ],
+            stdout=handle,
+            stderr=subprocess.STDOUT,
+            cwd=str(bundle_root),
+            env=child_env,
+        )
+    update_approach_status(config, approach_label, "spawned", pid=int(process.pid))
+    return {"approach_label": approach_label, "pid": int(process.pid)}
+
+
+def launch_parallel_approaches(config: dict[str, Any]) -> list[dict[str, Any]]:
+    limit = max(1, int(config["request"].get("max_parallel_approaches", 2)))
+    return [launch_approach_process(config, spec) for spec in config["specs"][:limit]]
 
 
 def wait_for_parallel_approaches(config: dict[str, Any], processes: list[dict[str, Any]]) -> dict[str, Any]:
     bundle_root = Path(config["bundle_root"])
     active = {entry["pid"]: entry for entry in processes}
+    limit = max(1, int(config["request"].get("max_parallel_approaches", 2)))
+    launched_labels = {str(entry["approach_label"]) for entry in processes}
+    pending_specs = [spec for spec in config["specs"] if str(spec["approach_label"]) not in launched_labels]
     completed: dict[str, Any] = {}
     while active:
         for pid, entry in list(active.items()):
@@ -1053,11 +1245,17 @@ def wait_for_parallel_approaches(config: dict[str, Any], processes: list[dict[st
             completed[approach_label] = read_json(metrics_path) if metrics_path.exists() else read_json(status_path)
             del active[pid]
 
+        while pending_specs and len(active) < limit:
+            next_spec = pending_specs.pop(0)
+            next_process = launch_approach_process(config, next_spec)
+            active[next_process["pid"]] = next_process
+
         update_bundle_status(
             config,
             "training_parallel",
             running_approaches=[entry["approach_label"] for entry in active.values()],
             completed_approaches=list(completed),
+            pending_approaches=[str(spec["approach_label"]) for spec in pending_specs],
         )
         if active:
             time.sleep(15)
@@ -1080,6 +1278,7 @@ def collect_existing_approach_payloads(config: dict[str, Any]) -> dict[str, Any]
 
 def finalize_bundle(config: dict[str, Any], prepared: dict[str, Any], approach_payloads: dict[str, Any]) -> dict[str, Any]:
     bundle_root = Path(config["bundle_root"])
+    summary_view = summarize_approach_payloads(config, prepared, approach_payloads)
     final_summary = {
         "bundle_id": config["bundle_id"],
         "bucket_uri": config["request"]["bucket_uri"],
@@ -1093,13 +1292,32 @@ def finalize_bundle(config: dict[str, Any], prepared: dict[str, Any], approach_p
         "feature_extractor_used": prepared["feature_extractor_used"],
         "feature_extractor_candidates": prepared.get("feature_extractor_candidates", []),
         "feature_extractors_by_approach": prepared.get("feature_extractors_by_approach", {}),
-        "approaches": approach_payloads,
+        "approaches": summary_view["approaches"],
+        "state": summary_view["overall_state"],
+        "best_approach": summary_view["best_approach"],
+        "completed_approach_count": summary_view["completed_count"],
+        "failed_approach_count": summary_view["failed_count"],
+        "running_approach_count": summary_view["running_count"],
     }
     ensemble_metrics = build_transmil_ensemble_summary(bundle_root, prepared, final_summary)
     if ensemble_metrics:
         final_summary["approaches"]["Ensemble_A1_MC"] = ensemble_metrics
     write_json(bundle_root / "final_summary.json", final_summary)
-    update_bundle_status(config, "completed", summary=final_summary)
+    status_extra = {
+        "selected_slide_count": len(prepared["selected_slide_names"]),
+        "label_counts": prepared["label_counts"],
+        "feature_extractor_used": prepared["feature_extractor_used"],
+        "best_approach": summary_view["best_approach"],
+        "approach_states": {
+            label: payload.get("state")
+            for label, payload in summary_view["approaches"].items()
+        },
+        "completed_approach_count": summary_view["completed_count"],
+        "failed_approach_count": summary_view["failed_count"],
+        "running_approach_count": summary_view["running_count"],
+        "summary": final_summary,
+    }
+    update_bundle_status(config, summary_view["overall_state"], **status_extra)
     return final_summary
 
 

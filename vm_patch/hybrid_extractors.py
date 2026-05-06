@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import os
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -12,6 +11,15 @@ from timm.data import create_transform, resolve_data_config
 from timm.layers import SwiGLUPacked
 from torchvision import transforms
 
+
+HYBRID_EXTRACTOR_ALIASES = {
+    "conch": "conch",
+    "virchow2": "virchow2",
+    "uni2-h": "uni2-h",
+    "uni2h": "uni2-h",
+    "h-optimus-0": "h-optimus-0",
+    "h_optimus_0": "h-optimus-0",
+}
 
 HYBRID_EXTRACTOR_NAMES = {
     "conch",
@@ -26,8 +34,9 @@ _REGISTERED = False
 @dataclass
 class ExtractorSpec:
     name: str
-    num_features: int
+    num_features: int | None
     model_builder: Callable[[str | None], tuple[nn.Module, Callable[..., Any]]]
+    aliases: tuple[str, ...] = ()
 
 
 class _ConchImageEncoder(nn.Module):
@@ -37,6 +46,63 @@ class _ConchImageEncoder(nn.Module):
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
         return self.model.encode_image(image, proj_contrast=False, normalize=False)
+
+
+class _Virchow2ImageEncoder(nn.Module):
+    def __init__(self, model: nn.Module):
+        super().__init__()
+        self.model = model
+
+    def forward(self, image: torch.Tensor) -> torch.Tensor:
+        output = self.model(image)
+        if isinstance(output, (tuple, list)):
+            output = output[0]
+        if output.ndim == 2:
+            return output
+        if output.ndim != 3:
+            raise RuntimeError(f"Virchow2 encoder returned unexpected shape: {tuple(output.shape)}")
+        class_token = output[:, 0]
+        patch_tokens = output[:, 5:] if output.shape[1] > 5 else output[:, 1:]
+        if patch_tokens.numel() == 0:
+            features = class_token
+        else:
+            features = torch.cat([class_token, patch_tokens.mean(1)], dim=-1)
+        if features.ndim != 2:
+            raise RuntimeError(f"Virchow2 pooled features must be 2D, got {tuple(features.shape)}")
+        return features
+
+
+class _TensorFriendlyTransform:
+    def __init__(self, preprocess: Callable[..., Any]):
+        self.preprocess = preprocess
+
+    def __repr__(self) -> str:
+        return repr(self.preprocess)
+
+    def __call__(self, image: Any):
+        if not isinstance(image, torch.Tensor):
+            return self.preprocess(image)
+
+        output = image
+        if not torch.is_floating_point(output):
+            output = output.float()
+        if output.max().item() > 1.0:
+            output = output / 255.0
+
+        if isinstance(self.preprocess, transforms.Compose):
+            for step in self.preprocess.transforms:
+                if isinstance(step, transforms.ToTensor):
+                    continue
+                if getattr(step, "__name__", "") == "_convert_to_rgb":
+                    continue
+                output = step(output)
+            return output
+        return self.preprocess(output)
+
+
+def normalize_extractor_name(name: str) -> str:
+    key = str(name).strip().lower()
+    return HYBRID_EXTRACTOR_ALIASES.get(key, key)
 
 
 def _device() -> str:
@@ -66,7 +132,7 @@ def _build_virchow2(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]
         act_layer=torch.nn.SiLU,
     )
     transform = create_transform(**resolve_data_config(model.pretrained_cfg, model=model))
-    return model, transform
+    return _Virchow2ImageEncoder(model), _TensorFriendlyTransform(transform)
 
 
 def _build_uni2_h(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]]:
@@ -89,7 +155,7 @@ def _build_uni2_h(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]]:
         dynamic_img_size=True,
     )
     transform = create_transform(**resolve_data_config(model.pretrained_cfg, model=model))
-    return model, transform
+    return model, _TensorFriendlyTransform(transform)
 
 
 def _build_h_optimus_0(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]]:
@@ -111,7 +177,7 @@ def _build_h_optimus_0(hf_token: str | None) -> tuple[nn.Module, Callable[..., A
             ),
         ]
     )
-    return model, transform
+    return model, _TensorFriendlyTransform(transform)
 
 
 def _build_conch(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]]:
@@ -128,19 +194,19 @@ def _build_conch(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]]:
         "hf_hub:MahmoodLab/CONCH",
         hf_auth_token=token,
     )
-    return _ConchImageEncoder(model), preprocess
+    return _ConchImageEncoder(model), _TensorFriendlyTransform(preprocess)
 
 
 SPECS = {
     "virchow2": ExtractorSpec("virchow2", 2560, _build_virchow2),
-    "uni2-h": ExtractorSpec("uni2-h", 1536, _build_uni2_h),
-    "h-optimus-0": ExtractorSpec("h-optimus-0", 1536, _build_h_optimus_0),
+    "uni2-h": ExtractorSpec("uni2-h", 1536, _build_uni2_h, aliases=("uni2h",)),
+    "h-optimus-0": ExtractorSpec("h-optimus-0", 1536, _build_h_optimus_0, aliases=("h_optimus_0",)),
     "conch": ExtractorSpec("conch", 512, _build_conch),
 }
 
 
 def hybrid_backend_for_name(name: str) -> str:
-    return "hybrid" if str(name).strip().lower() in HYBRID_EXTRACTOR_NAMES else "slideflow"
+    return "hybrid" if normalize_extractor_name(name) in HYBRID_EXTRACTOR_NAMES else "slideflow"
 
 
 def register_hybrid_extractors(sf, hf_token: str | None = None) -> None:
@@ -160,9 +226,9 @@ def register_hybrid_extractors(sf, hf_token: str | None = None) -> None:
                 model, transform = spec.model_builder(hf_token or os.environ.get("HF_TOKEN"))
                 self.model = model.to(_device())
                 self.model.eval()
-                self.num_features = spec.num_features
                 self.transform = transform
                 self.preprocess_kwargs = {"standardize": False}
+                self.num_features = spec.num_features
 
             def dump_config(self):
                 return self._dump_config(
@@ -182,6 +248,7 @@ def register_hybrid_extractors(sf, hf_token: str | None = None) -> None:
 
             return _factory
 
-        register_torch(spec.name)(_make_factory())
+        for tag in {spec.name, *spec.aliases}:
+            register_torch(tag)(_make_factory())
 
     _REGISTERED = True

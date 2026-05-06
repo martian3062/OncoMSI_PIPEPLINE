@@ -1,0 +1,272 @@
+{
+  "approaches": {
+    "Approach1-Virchow": {
+      "approach_label": "Approach1-Virchow",
+      "artifacts": {
+        "prediction_files": [
+          "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-7808c90045e9/slideflow_project/mil/run-7808c90045e9_run-7808c90045e9_a1_approach1-virchow_transmil_repeat_1_fold_1/00000-run-7808c90045e9_run-7808c90045e9_a1_approach1-virchow_transmil_repeat_1_fold_1/predictions.parquet",
+          "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-7808c90045e9/slideflow_project/mil/run-7808c90045e9_run-7808c90045e9_a1_approach1-virchow_transmil_repeat_1_fold_2/00000-run-7808c90045e9_run-7808c90045e9_a1_approach1-virchow_transmil_repeat_1_fold_2/predictions.parquet"
+        ]
+      },
+      "epochs": 30,
+      "experiment_id": "run-7808c90045e9_a1",
+      "feature_extractor_used": "virchow",
+      "folds": 2,
+      "mean_auroc": 0.45833333333333337,
+      "mean_best_threshold": 0.43387049436569214,
+      "mean_f1_macro": 0.5551670551670551,
+      "mean_f1_macro_default_threshold": 0.3827642945290004,
+      "mil_model": "transmil",
+      "mil_model_candidates": [
+        "transmil"
+      ],
+      "mil_model_config_errors": {},
+      "mil_model_requested": [
+        "transmil"
+      ],
+      "n_folds": 2,
+      "n_repeats": 1,
+      "seed": 310,
+      "state": "completed"
+    },
+    "Approach2-RetCCL": {
+      "approach_label": "Approach2-RetCCL",
+      "artifacts": {
+        "prediction_files": [
+          "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-7808c90045e9/slideflow_project/mil/run-7808c90045e9_run-7808c90045e9_a2_approach2-retccl_transmil_repeat_1_fold_1/00000-run-7808c90045e9_run-7808c90045e9_a2_approach2-retccl_transmil_repeat_1_fold_1/predictions.parquet",
+          "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-7808c90045e9/slideflow_project/mil/run-7808c90045e9_run-7808c90045e9_a2_approach2-retccl_transmil_repeat_1_fold_2/00000-run-7808c90045e9_run-7808c90045e9_a2_approach2-retccl_transmil_repeat_1_fold_2/predictions.parquet"
+        ]
+      },
+      "epochs": 30,
+      "experiment_id": "run-7808c90045e9_a2",
+      "feature_extractor_used": "retccl",
+      "folds": 2,
+      "mean_auroc": 0.5972222222222222,
+      "mean_best_threshold": 0.49494099617004395,
+      "mean_f1_macro": 0.6369047619047619,
+      "mean_f1_macro_default_threshold": 0.5206264323911383,
+      "mil_model": "transmil",
+      "mil_model_candidates": [
+        "transmil"
+      ],
+      "mil_model_config_errors": {},
+      "mil_model_requested": [
+        "transmil"
+      ],
+      "n_folds": 2,
+      "n_repeats": 1,
+      "seed": 310,
+      "state": "completed"
+    },
+    "Approach3-CTransPath": {
+      "approach_label": "Approach3-CTransPath",
+      "artifacts": {
+        "prediction_files": [
+          "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-7808c90045e9/slideflow_project/mil/run-7808c90045e9_run-7808c90045e9_a3_approach3-ctranspath_transmil_repeat_1_fold_1/00000-run-7808c90045e9_run-7808c90045e9_a3_approach3-ctranspath_transmil_repeat_1_fold_1/predictions.parquet",
+          "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-7808c90045e9/slideflow_project/mil/run-7808c90045e9_run-7808c90045e9_a3_approach3-ctranspath_transmil_repeat_1_fold_2/00000-run-7808c90045e9_run-7808c90045e9_a3_approach3-ctranspath_transmil_repeat_1_fold_2/predictions.parquet"
+        ]
+      },
+      "epochs": 30,
+      "experiment_id": "run-7808c90045e9_a3",
+      "feature_extractor_used": "ctranspath",
+      "folds": 2,
+      "mean_auroc": 0.4888888888888889,
+      "mean_best_threshold": 0.5094455033540726,
+      "mean_f1_macro": 0.6068764568764569,
+      "mean_f1_macro_default_threshold": 0.47125097125097126,
+      "mil_model": "transmil",
+      "mil_model_candidates": [
+        "transmil"
+      ],
+      "mil_model_config_errors": {},
+      "mil_model_requested": [
+        "transmil"
+      ],
+      "n_folds": 2,
+      "n_repeats": 1,
+      "seed": 310,
+      "state": "completed"
+    },
+    "Approach4-CONCH": {
+      "approach_label": "Approach4-CONCH",
+      "artifacts": {
+        "prediction_files": [
+          "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-7808c90045e9/slideflow_project/mil/run-7808c90045e9_run-7808c90045e9_a4_approach4-conch_transmil_repeat_1_fold_1/00000-run-7808c90045e9_run-7808c90045e9_a4_approach4-conch_transmil_repeat_1_fold_1/predictions.parquet",
+          "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-7808c90045e9/slideflow_project/mil/run-7808c90045e9_run-7808c90045e9_a4_approach4-conch_transmil_repeat_1_fold_2/00000-run-7808c90045e9_run-7808c90045e9_a4_approach4-conch_transmil_repeat_1_fold_2/predictions.parquet"
+        ]
+      },
+      "epochs": 30,
+      "experiment_id": "run-7808c90045e9_a4",
+      "feature_extractor_used": "conch",
+      "folds": 2,
+      "mean_auroc": 0.6111111111111112,
+      "mean_best_threshold": 0.40919649600982666,
+      "mean_f1_macro": 0.6795634920634921,
+      "mean_f1_macro_default_threshold": 0.5095238095238095,
+      "mil_model": "transmil",
+      "mil_model_candidates": [
+        "transmil"
+      ],
+      "mil_model_config_errors": {},
+      "mil_model_requested": [
+        "transmil"
+      ],
+      "n_folds": 2,
+      "n_repeats": 1,
+      "seed": 310,
+      "state": "completed"
+    },
+    "Approach5-Virchow2": {
+      "approach_label": "Approach5-Virchow2",
+      "artifacts": {
+        "prediction_files": [
+          "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-7808c90045e9/slideflow_project/mil/run-7808c90045e9_run-7808c90045e9_a5_approach5-virchow2_transmil_repeat_1_fold_1/00000-run-7808c90045e9_run-7808c90045e9_a5_approach5-virchow2_transmil_repeat_1_fold_1/predictions.parquet",
+          "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-7808c90045e9/slideflow_project/mil/run-7808c90045e9_run-7808c90045e9_a5_approach5-virchow2_transmil_repeat_1_fold_2/00000-run-7808c90045e9_run-7808c90045e9_a5_approach5-virchow2_transmil_repeat_1_fold_2/predictions.parquet"
+        ]
+      },
+      "available_bag_slide_count": 23,
+      "epochs": 30,
+      "experiment_id": "run-7808c90045e9_a5",
+      "feature_extractor_used": "virchow2",
+      "folds": 2,
+      "mean_auroc": 0.7972222222222223,
+      "mean_best_threshold": 0.38354799151420593,
+      "mean_f1_macro": 0.7732600732600732,
+      "mean_f1_macro_default_threshold": 0.6776973026973028,
+      "mil_model": "transmil",
+      "mil_model_candidates": [
+        "transmil"
+      ],
+      "mil_model_config_errors": {},
+      "mil_model_requested": [
+        "transmil"
+      ],
+      "missing_bag_slides": [
+        "TCGA-A6-2675-01Z-00-DX1.d37847d6-c17f-44b9-b90a-84cd1946c8ab"
+      ],
+      "n_folds": 2,
+      "n_repeats": 1,
+      "seed": 310,
+      "state": "completed"
+    },
+    "Approach6-UNI2-H": {
+      "approach_label": "Approach6-UNI2-H",
+      "artifacts": {
+        "prediction_files": [
+          "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-7808c90045e9/slideflow_project/mil/run-7808c90045e9_run-7808c90045e9_a6_approach6-uni2-h_transmil_repeat_1_fold_1/00000-run-7808c90045e9_run-7808c90045e9_a6_approach6-uni2-h_transmil_repeat_1_fold_1/predictions.parquet",
+          "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-7808c90045e9/slideflow_project/mil/run-7808c90045e9_run-7808c90045e9_a6_approach6-uni2-h_transmil_repeat_1_fold_2/00000-run-7808c90045e9_run-7808c90045e9_a6_approach6-uni2-h_transmil_repeat_1_fold_2/predictions.parquet"
+        ]
+      },
+      "epochs": 30,
+      "experiment_id": "run-7808c90045e9_a6",
+      "feature_extractor_used": "uni2-h",
+      "folds": 2,
+      "mean_auroc": 0.8500000000000001,
+      "mean_best_threshold": 0.46445751190185547,
+      "mean_f1_macro": 0.825,
+      "mean_f1_macro_default_threshold": 0.5187324929971988,
+      "mil_model": "transmil",
+      "mil_model_candidates": [
+        "transmil"
+      ],
+      "mil_model_config_errors": {},
+      "mil_model_requested": [
+        "transmil"
+      ],
+      "n_folds": 2,
+      "n_repeats": 1,
+      "seed": 310,
+      "state": "completed"
+    },
+    "Approach7-H-Optimus-0": {
+      "approach_label": "Approach7-H-Optimus-0",
+      "artifacts": {
+        "prediction_files": [
+          "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-7808c90045e9/slideflow_project/mil/run-7808c90045e9_run-7808c90045e9_a7_approach7-h-optimus-0_transmil_repeat_1_fold_1/00000-run-7808c90045e9_run-7808c90045e9_a7_approach7-h-optimus-0_transmil_repeat_1_fold_1/predictions.parquet",
+          "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-7808c90045e9/slideflow_project/mil/run-7808c90045e9_run-7808c90045e9_a7_approach7-h-optimus-0_transmil_repeat_1_fold_2/00000-run-7808c90045e9_run-7808c90045e9_a7_approach7-h-optimus-0_transmil_repeat_1_fold_2/predictions.parquet"
+        ]
+      },
+      "epochs": 30,
+      "experiment_id": "run-7808c90045e9_a7",
+      "feature_extractor_used": "h-optimus-0",
+      "folds": 2,
+      "mean_auroc": 0.8222222222222222,
+      "mean_best_threshold": 0.4256100058555603,
+      "mean_f1_macro": 0.7756410256410257,
+      "mean_f1_macro_default_threshold": 0.6316239316239316,
+      "mil_model": "transmil",
+      "mil_model_candidates": [
+        "transmil"
+      ],
+      "mil_model_config_errors": {},
+      "mil_model_requested": [
+        "transmil"
+      ],
+      "n_folds": 2,
+      "n_repeats": 1,
+      "seed": 310,
+      "state": "completed"
+    }
+  },
+  "best_approach": "Approach6-UNI2-H",
+  "bucket_uri": "gs://wsi_aiml_repo/TCGA/TCGA_COAD/TCGA_COAD",
+  "bundle_id": "run-7808c90045e9",
+  "completed_approach_count": 7,
+  "failed_approach_count": 0,
+  "feature_extractor_candidates": [
+    "virchow",
+    "retccl",
+    "ctranspath",
+    "conch",
+    "virchow2",
+    "uni2-h",
+    "h-optimus-0"
+  ],
+  "feature_extractor_used": "multiple",
+  "feature_extractors_by_approach": {
+    "Approach1-Virchow": "virchow",
+    "Approach2-RetCCL": "retccl",
+    "Approach3-CTransPath": "ctranspath",
+    "Approach4-CONCH": "conch",
+    "Approach5-Virchow2": "virchow2",
+    "Approach6-UNI2-H": "uni2-h",
+    "Approach7-H-Optimus-0": "h-optimus-0"
+  },
+  "label_counts": {
+    "MSI-H": 12,
+    "MSS": 12
+  },
+  "n_folds": 2,
+  "n_repeats": 1,
+  "requested_slide_limit": 24,
+  "running_approach_count": 0,
+  "selected_slide_count": 24,
+  "selected_slides": [
+    "TCGA-5M-AAT6-01Z-00-DX1.8834C952-14E3-4491-8156-52FC917BB014.svs",
+    "TCGA-A6-2672-01Z-00-DX1.e2a845c8-6d77-4120-9f43-abec84a66c1c.svs",
+    "TCGA-A6-2676-01Z-00-DX1.c465f6e0-b47c-48e9-bdb1-67077bb16c67.svs",
+    "TCGA-A6-2686-01Z-00-DX1.0540a027-2a0c-46c7-9af0-7b8672631de7.svs",
+    "TCGA-A6-3809-01Z-00-DX1.c26f03e8-c285-4a66-925d-ae9cba17d7b3.svs",
+    "TCGA-A6-5661-01Z-00-DX1.bad2d858-11b4-4b9c-a720-daaae592cf48.svs",
+    "TCGA-A6-5665-01Z-00-DX1.3ad2c249-d138-4037-a59b-4747ce2b789a.svs",
+    "TCGA-A6-6653-01Z-00-DX1.e130666d-2681-4382-9e7a-4a4d27cb77a4.svs",
+    "TCGA-AA-3492-01Z-00-DX1.32D79909-71D5-4843-847E-AECA5DBC963D.svs",
+    "TCGA-AA-3516-01Z-00-DX1.0a9d9207-6dc2-44b9-89ea-16418430c484.svs",
+    "TCGA-AA-3518-01Z-00-DX1.5aad7b19-2900-4f1c-9312-f8d8c4725449.svs",
+    "TCGA-AA-3525-01Z-00-DX1.b6079f23-6ad2-41fb-885f-d7c68450c8d5.svs",
+    "TCGA-3L-AA1B-01Z-00-DX1.8923A151-A690-40B7-9E5A-FCBEDFC2394F.svs",
+    "TCGA-4N-A93T-01Z-00-DX1.82E240B1-22C3-46E3-891F-0DCE35C43F8B.svs",
+    "TCGA-4T-AA8H-01Z-00-DX1.A46C759C-74A2-4724-B6B5-DECA0D16E029.svs",
+    "TCGA-5M-AAT4-01Z-00-DX1.725C46CA-9354-43AC-AA81-3E5A66354D6B.svs",
+    "TCGA-5M-AAT5-01Z-00-DX1.548E7CEB-48FB-4037-A616-39AB025E7A73.svs",
+    "TCGA-5M-AATE-01Z-00-DX1.483FFD2F-61A1-477E-8F94-157383803FC7.svs",
+    "TCGA-A6-2671-01Z-00-DX1.13d1a0d9-78cd-4cfc-b670-34a79ebe52ee.svs",
+    "TCGA-A6-2674-01Z-00-DX1.d301f1f5-6f4a-49e6-9c93-f4e8b7f616b8.svs",
+    "TCGA-A6-2675-01Z-00-DX1.d37847d6-c17f-44b9-b90a-84cd1946c8ab.svs",
+    "TCGA-A6-2677-01Z-00-DX1.dc0903dc-fef2-47ca-8f04-1ef25a4d8338.svs",
+    "TCGA-A6-2678-01Z-00-DX1.bded5c5c-555a-492a-91c7-151492d0ee5e.svs",
+    "TCGA-A6-2679-01Z-00-DX1.8df66ef4-d9e5-41db-836d-f0afe46d6b5a.svs"
+  ],
+  "slide_limit": 24,
+  "state": "completed"
+}

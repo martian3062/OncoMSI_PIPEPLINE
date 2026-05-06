@@ -1,0 +1,10 @@
+{
+  "bundle_id": "run-a084bb5f23de",
+  "completed_approaches": [],
+  "running_approaches": [
+    "Approach1",
+    "Approach2"
+  ],
+  "state": "training_parallel",
+  "updated_at_epoch": 1777996513.5343785
+}
