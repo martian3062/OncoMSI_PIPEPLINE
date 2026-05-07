@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import sys
+import inspect
+import re
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -111,6 +113,10 @@ class _ForwardImageEncoder(nn.Module):
             output = output.last_hidden_state
         if output.ndim == 2:
             return output
+        if output.ndim == 4:
+            if self.pool == "spatial_mean":
+                return output.mean(dim=(1, 2))
+            raise RuntimeError(f"Unsupported 4D pooling mode: {self.pool}")
         if output.ndim != 3:
             raise RuntimeError(f"Extractor returned unexpected shape: {tuple(output.shape)}")
 
@@ -175,6 +181,15 @@ def _configure_hf_token(hf_token: str | None) -> str | None:
     except Exception:
         pass
     return token
+
+
+def _install_timm_compat_shims() -> None:
+    """Backfill timm module paths expected by older third-party repos."""
+    try:
+        import timm.layers.helpers as timm_layers_helpers
+    except Exception:
+        return
+    sys.modules.setdefault("timm.models.layers.helpers", timm_layers_helpers)
 
 
 def _build_processor_transform(
@@ -244,7 +259,7 @@ def _build_uni2_h(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]]:
         dynamic_img_size=True,
     )
     transform = create_transform(**resolve_data_config(model.pretrained_cfg, model=model))
-    return model, _TensorFriendlyTransform(transform)
+    return _ForwardImageEncoder(model, pool="spatial_mean"), _TensorFriendlyTransform(transform)
 
 
 def _build_h_optimus_0(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]]:
@@ -266,7 +281,7 @@ def _build_h_optimus_0(hf_token: str | None) -> tuple[nn.Module, Callable[..., A
             ),
         ]
     )
-    return model, _TensorFriendlyTransform(transform)
+    return _ForwardImageEncoder(model, pool="spatial_mean"), _TensorFriendlyTransform(transform)
 
 
 def _build_conch(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]]:
@@ -394,12 +409,76 @@ def _build_chief(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]]:
         )
     if repo_path not in sys.path:
         sys.path.insert(0, repo_path)
-    from models.ctran import ctranspath
+    _install_timm_compat_shims()
+    import models.ctran as chief_ctran
+
+    if not getattr(chief_ctran, "_codex_convstem_compat", False):
+        original_convstem = chief_ctran.ConvStem
+
+        class CompatConvStem(original_convstem):
+            def __init__(
+                self,
+                img_size: int = 224,
+                patch_size: int = 4,
+                in_chans: int = 3,
+                embed_dim: int = 768,
+                norm_layer: Callable[..., nn.Module] | None = None,
+                flatten: bool = True,
+                output_fmt: str | None = None,
+                strict_img_size: bool | None = None,
+                **kwargs: Any,
+            ) -> None:
+                del strict_img_size, kwargs
+                super().__init__(
+                    img_size=img_size,
+                    patch_size=patch_size,
+                    in_chans=in_chans,
+                    embed_dim=embed_dim,
+                    norm_layer=norm_layer,
+                    flatten=flatten if output_fmt is None else False,
+                )
+                self.output_fmt = output_fmt
+                self.flatten = flatten if output_fmt is None else False
+
+            def forward(self, x: torch.Tensor) -> torch.Tensor:
+                batch, channels, height, width = x.shape
+                assert height == self.img_size[0] and width == self.img_size[1], (
+                    f"Input image size ({height}*{width}) doesn't match model "
+                    f"({self.img_size[0]}*{self.img_size[1]})."
+                )
+                x = self.proj(x)
+                if self.flatten:
+                    x = x.flatten(2).transpose(1, 2)
+                elif self.output_fmt and self.output_fmt.upper() == "NHWC":
+                    x = x.permute(0, 2, 3, 1).contiguous()
+                x = self.norm(x)
+                return x
+
+        chief_ctran.ConvStem = CompatConvStem
+        chief_ctran._codex_convstem_compat = True
+
+    ctranspath = chief_ctran.ctranspath
 
     model = ctranspath()
     model.head = nn.Identity()
     state = torch.load(weights_path, map_location="cpu")
-    model.load_state_dict(state.get("model", state), strict=True)
+    raw_state = state.get("model", state)
+    remapped_state = {}
+    downsample_pattern = re.compile(r"^layers\.(\d+)\.downsample\.(.+)$")
+    for key, value in raw_state.items():
+        if key.endswith("attn.relative_position_index") or key.endswith("attn_mask"):
+            continue
+        match = downsample_pattern.match(key)
+        if match:
+            key = f"layers.{int(match.group(1)) + 1}.downsample.{match.group(2)}"
+        remapped_state[key] = value
+    missing, unexpected = model.load_state_dict(remapped_state, strict=False)
+    allowed_missing = {"head.weight", "head.bias"}
+    real_missing = [item for item in missing if item not in allowed_missing]
+    if real_missing or unexpected:
+        raise RuntimeError(
+            f"CHIEF CTransPath load mismatch. Missing={real_missing} Unexpected={unexpected}"
+        )
     transform = transforms.Compose(
         [
             transforms.Resize(224),
@@ -407,7 +486,7 @@ def _build_chief(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]]:
             transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
         ]
     )
-    return model, _TensorFriendlyTransform(transform)
+    return _ForwardImageEncoder(model, pool="spatial_mean"), _TensorFriendlyTransform(transform)
 
 
 SPECS = {

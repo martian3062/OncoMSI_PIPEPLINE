@@ -1,3 +1,31 @@
+## Latest Semi-Final Result
+
+Latest validated semi-final result:
+
+- run id: `run-8635c038adcc`
+- result written: `2026-05-07 04:03:52 PM IST`
+- state: `completed`
+- completed approaches: `10 / 10`
+- failed approaches: `0`
+- best approach: `Approach2-Virchow2`
+- cohort: `200` TCGA COAD slides with `74 MSI-H` and `126 MSS`
+- bundle artifact: `final_summary.json`
+
+### Complete Semi-Final Results Table
+
+| Approach | Extractor used | AUROC | F1 macro | AUPRC | Bal Acc | MSI-H Recall | Specificity | Best threshold | State |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Approach1-UNI2-h | `uni2-h` | `0.9729` | `0.9516` | `0.9842` | `0.9554` | `0.9519` | `0.9589` | `0.4091` | `completed` |
+| Approach2-Virchow2 | `virchow2` | `0.9771` | `0.9421` | `0.9875` | `0.9504` | `0.9276` | `0.9732` | `0.4956` | `completed` |
+| Approach3-Prov-GigaPath | `prov-gigapath` | `0.9667` | `0.9272` | `0.9798` | `0.9295` | `0.9519` | `0.9071` | `0.4318` | `completed` |
+| Approach4-CONCHv1.5 | `conchv1_5` | `0.9506` | `0.9103` | `0.9732` | `0.9225` | `0.8878` | `0.9571` | `0.4579` | `completed` |
+| Approach5-H-Optimus-0 | `h-optimus-0` | `0.9740` | `0.9289` | `0.9852` | `0.9316` | `0.9436` | `0.9196` | `0.3938` | `completed` |
+| Approach6-Midnight-12k | `midnight` | `0.9713` | `0.9554` | `0.9830` | `0.9542` | `0.9763` | `0.9321` | `0.4376` | `completed` |
+| Approach7-DINOv2-Large | `dinov2-large` | `0.8533` | `0.8288` | `0.9086` | `0.8239` | `0.8942` | `0.7536` | `0.4174` | `completed` |
+| Approach8-DINOv3ViT-B/16 | `dinov3-vitb16` | `0.9368` | `0.8990` | `0.9621` | `0.9088` | `0.8962` | `0.9214` | `0.4859` | `completed` |
+| Approach9-CHIEF | `chief` | `0.9486` | `0.9097` | `0.9724` | `0.9159` | `0.9122` | `0.9196` | `0.4973` | `completed` |
+| Approach10-RetCCL | `retccl` | `0.8849` | `0.8657` | `0.9271` | `0.8663` | `0.9218` | `0.8107` | `0.3580` | `completed` |
+
 # OncoMSI_PIPEPLINE
 
 OncoMSI is a Django-based MSI training workbench for pathology experiments on
@@ -38,11 +66,10 @@ collapsed here so the opening is easier to scan.
 - top-of-file note: later sections keep the full run notes and branch history, so
   this section replaces the duplicate opening summary instead of deleting it
 
-### Semi-Final Currently Selected Roster
+### Semi-Final Completed Roster
 
-This is the active strict semi-final roster for the in-progress `200`-slide
-foundation-model run. These are the models currently selected for the fresh
-semi-final benchmark, not completed result rows yet.
+This is the strict semi-final roster that was used for the completed `200`-slide
+foundation-model benchmark written on `2026-05-07 04:03:52 PM IST`.
 
 | Slot | Semi-final approach | Extractor / model used | Access | Status in plan |
 | ---: | --- | --- | --- | --- |
@@ -57,12 +84,13 @@ semi-final benchmark, not completed result rows yet.
 | 9 | CHIEF | `github.com/hms-dbmi/CHIEF` + official Docker weights | request/docker | selected |
 | 10 | RetCCL | `retccl` | slideflow/native | selected |
 
-### Semi-Final Current Run Settings
+### Semi-Final Completed Run Settings
 
 | Item | Value |
 | --- | --- |
 | run intent | `semi-final` |
-| active run id | `run-8635c038adcc` |
+| completed run id | `run-8635c038adcc` |
+| result written | `2026-05-07 04:03:52 PM IST` |
 | requested slides | `200` |
 | folds | `10` |
 | repeats | `1` |
