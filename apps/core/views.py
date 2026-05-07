@@ -60,6 +60,63 @@ LIVE_STATES = {
 }
 
 
+def _clock_delta_seconds(start: str, end: str) -> int | None:
+    def _to_seconds(value: str) -> int | None:
+        try:
+            hours, minutes, seconds = [int(part) for part in value.split(":", 2)]
+        except (TypeError, ValueError):
+            return None
+        return hours * 3600 + minutes * 60 + seconds
+
+    start_seconds = _to_seconds(start)
+    end_seconds = _to_seconds(end)
+    if start_seconds is None or end_seconds is None:
+        return None
+    if end_seconds < start_seconds:
+        end_seconds += 24 * 3600
+    return end_seconds - start_seconds
+
+
+def _feature_runtime_snapshot(run: Run) -> dict:
+    snapshot = getattr(run, "live_runtime", {}) or {}
+    if run.state != "generating_features":
+        return {}
+    current_extractor = str(snapshot.get("current_extractor") or "").strip()
+    bag_counts = snapshot.get("bag_counts") or {}
+    selected = int(snapshot.get("selected_slide_count") or run.selected_slide_display or 0)
+    if not current_extractor or not selected:
+        return snapshot
+    bag_key = f"{current_extractor}_{run.tile_px}px_{run.tile_um}um"
+    current_bags = int((bag_counts.get(bag_key) or {}).get("pt") or 0)
+    sequence = snapshot.get("extractor_sequence") or []
+    total_extractors = int(snapshot.get("spec_count") or len(sequence) or len(run.feature_extractor_candidates or []) or 0)
+    current_index = 0
+    for idx, item in enumerate(sequence, start=1):
+        if item.get("extractor") == current_extractor:
+            current_index = idx
+    completed_extractors = max(0, current_index - 1)
+    average_seconds = None
+    if len(sequence) >= 2:
+        deltas = []
+        for previous, current in zip(sequence, sequence[1:]):
+            delta = _clock_delta_seconds(previous.get("time", ""), current.get("time", ""))
+            if delta and delta > 0:
+                deltas.append(delta)
+        if deltas:
+            average_seconds = int(sum(deltas) / len(deltas))
+    fraction_done = min(1.0, current_bags / max(1, selected))
+    eta_to_training = None
+    if average_seconds and total_extractors:
+        remaining_extractors = max(0.0, total_extractors - completed_extractors - fraction_done)
+        eta_to_training = timedelta(seconds=int(average_seconds * remaining_extractors))
+    snapshot["current_bags"] = current_bags
+    snapshot["total_extractors"] = total_extractors
+    snapshot["current_index"] = current_index
+    snapshot["completed_extractors"] = completed_extractors
+    snapshot["eta_to_training"] = eta_to_training
+    return snapshot
+
+
 def format_duration(delta: timedelta | None) -> str:
     if not delta:
         return "n/a"
@@ -87,6 +144,18 @@ def infer_run_progress(run: Run) -> tuple[int, str]:
         progress = 72 + int(round((run.completed_link_count / max(1, run.total_link_count)) * 24))
         detail = f"{run.completed_link_count}/{run.total_link_count} approaches synced"
         return min(96, progress), detail
+    feature_runtime = _feature_runtime_snapshot(run)
+    if feature_runtime:
+        current_index = int(feature_runtime.get("current_index") or 0)
+        total_extractors = int(feature_runtime.get("total_extractors") or 0)
+        current_bags = int(feature_runtime.get("current_bags") or 0)
+        selected = int(feature_runtime.get("selected_slide_count") or run.selected_slide_display or 0)
+        if current_index and total_extractors and selected:
+            base = 56
+            span = 16
+            progress = base + int(round(((current_index - 1) + (current_bags / max(1, selected))) / total_extractors * span))
+            detail = f"Extractor {current_index}/{total_extractors}: {run.extractor_display} {current_bags}/{selected} bags"
+            return min(71, progress), detail
     base = STATE_PROGRESS.get(run.state, 0)
     if run.state == "completed":
         return 100, "Bundle finished"
@@ -102,6 +171,9 @@ def infer_eta_copy(run: Run) -> str:
         return "Needs recovery"
 
     elapsed = timezone.now() - run.created_at
+    feature_runtime = _feature_runtime_snapshot(run)
+    if feature_runtime.get("eta_to_training"):
+        return f"ETA {format_duration(feature_runtime['eta_to_training'])} to training"
     if run.state in {"training_parallel", "training"} and run.completed_link_count > 0 and run.total_link_count > run.completed_link_count:
         completed = max(1, run.completed_link_count)
         per_approach_seconds = elapsed.total_seconds() / completed
@@ -119,6 +191,7 @@ def infer_eta_copy(run: Run) -> str:
 def build_scientific_metrics(link) -> list[dict[str, str]]:
     return [
         {"label": "AUROC", "value": metric_display(link.mean_auroc)},
+        {"label": "F1 Macro", "value": metric_display(getattr(link, "mean_f1_macro", None))},
         {"label": "AUPRC", "value": metric_display(getattr(link, "mean_auprc", None))},
         {"label": "Bal Acc", "value": metric_display(getattr(link, "mean_balanced_accuracy", None))},
         {"label": "MSI-H Recall", "value": metric_display(getattr(link, "mean_recall_msi_h", None))},
@@ -156,6 +229,23 @@ def build_stage_copy(run: Run) -> tuple[str, str]:
             "The VM is reprocessing the incomplete slides before feature generation continues.",
         )
     if run.state == "generating_features":
+        feature_runtime = _feature_runtime_snapshot(run)
+        if feature_runtime:
+            current_bags = int(feature_runtime.get("current_bags") or 0)
+            selected = int(feature_runtime.get("selected_slide_count") or run.selected_slide_display or 0)
+            total_extractors = int(feature_runtime.get("total_extractors") or 0)
+            current_index = int(feature_runtime.get("current_index") or 0)
+            missing_count = int(feature_runtime.get("missing_bag_count") or 0)
+            missing_preview = ", ".join(feature_runtime.get("missing_bag_slides") or [])
+            detail = f"Extractor {current_index}/{total_extractors} has emitted {current_bags}/{selected} bags."
+            if missing_count:
+                detail = f"{detail} {missing_count} slide is currently missing a bag."
+                if missing_preview:
+                    detail = f"{detail} Latest missing example: {missing_preview}."
+            return (
+                f"Feature bags are building for {run.extractor_display}.",
+                detail,
+            )
         return (
             f"Feature bags are building for {run.extractor_display}.",
             f"Tiles are ready. Embeddings are being generated across {run.selected_slide_display} slides.",
@@ -187,9 +277,9 @@ def build_milestone_items(live_runs: list[Run]) -> list[dict[str, str]]:
     items: list[dict[str, str]] = []
     for run in live_runs:
         title, detail = build_stage_copy(run)
-        meta = f"Run {run.run_id} • Updated {run.last_sync_display}"
+        meta = f"Run {run.run_id} - Updated {run.last_sync_display}"
         if run.sync_error:
-            meta = f"{meta} • VM sync warning"
+            meta = f"{meta} - VM sync warning"
         items.append(
             {
                 "run_id": run.run_id,
@@ -242,7 +332,8 @@ def hydrate_run(run: Run, *, allow_sync_failure: bool, sync_remote: bool) -> Run
     run.sync_detail = ""
     if sync_remote and (run.remote_status_path.startswith("/") or run.bundle_config_path.startswith("/")):
         try:
-            sync_run_status(run)
+            sync_payload = sync_run_status(run)
+            run.live_runtime = sync_payload.get("live_runtime", {})
             run.refresh_from_db()
         except Exception as exc:
             run.sync_error = str(exc).strip().splitlines()[-1] if str(exc).strip() else type(exc).__name__
@@ -403,7 +494,7 @@ def launch_run(request: HttpRequest) -> HttpResponse:
     except json.JSONDecodeError:
         external_cohorts = []
     payload = {
-        "experiment_name": request.POST.get("experiment_name") or "tcga3-hybrid-02-200x10f-conch15-phikonv2-gigapath-prism-chief-dinov3-midnight-256tiles",
+        "experiment_name": request.POST.get("experiment_name") or "tcga3-semi-final-200x10f-uni2h-virchow2-gigapath-conch15-hoptimus-midnight-dinov2large-dinov3vitb16-chief-retccl-256tiles",
         "source_uri": request.POST.get("source_uri") or "gs://wsi_aiml_repo/TCGA/TCGA_COAD/TCGA_COAD",
         "annotations_csv": request.POST.get("annotations_csv") or "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/django_rebuild_cleaned_msi/runtime/annotations/tcga3_vm_annotations.csv",
         "requested_slide_limit": int(request.POST.get("requested_slide_limit") or 200),
@@ -414,7 +505,7 @@ def launch_run(request: HttpRequest) -> HttpResponse:
             item.strip()
             for item in (
                 request.POST.get("feature_extractors")
-                or "conchv1_5,phikon-v2,prov-gigapath,prism-virchow,chief-ctranspath,dinov3,midnight"
+                or "uni2-h,virchow2,prov-gigapath,conchv1_5,h-optimus-0,midnight,dinov2-large,dinov3-vitb16,chief,retccl"
             ).split(",")
             if item.strip()
         ],

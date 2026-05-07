@@ -55,6 +55,7 @@ semi-final benchmark, not completed result rows yet.
 | 7 | DINOv2-Large | `facebook/dinov2-large` | open | selected |
 | 8 | DINOv3 ViT-B/16 | `facebook/dinov3-vitb16-pretrain-lvd1689m` | gated | selected |
 | 9 | CHIEF | `github.com/hms-dbmi/CHIEF` + official Docker weights | request/docker | selected |
+| 10 | RetCCL | `retccl` | slideflow/native | selected |
 
 ### Semi-Final Current Run Settings
 
@@ -66,7 +67,7 @@ semi-final benchmark, not completed result rows yet.
 | folds | `10` |
 | repeats | `1` |
 | max tiles per slide | `256` |
-| max parallel approaches | `2` |
+| max parallel approaches | `3` |
 | generic fallback | disabled |
 
 ## Hybrid Direction
@@ -807,7 +808,7 @@ The new semi-final run uses:
 | folds | `10` |
 | repeats | `1` |
 | max tiles per slide | `256` |
-| max parallel approaches | `2` |
+| max parallel approaches | `3` |
 | generic fallback | disabled |
 
 The reason for increasing to `200` slides is to reduce small-cohort noise while
@@ -818,7 +819,7 @@ still staying practical on the L4 24 GB GPU and 32 GB RAM VM.
 The VM is configured for controlled parallel execution:
 
 ```env
-VM_MAX_PARALLEL_APPROACHES=2
+VM_MAX_PARALLEL_APPROACHES=3
 ```
 
 This gives faster throughput than fully sequential execution, but avoids trying
@@ -836,9 +837,9 @@ model perform?" not "Which fallback happened to run?"
 
 ### Final Semi-Final Roster
 
-The semi-final launch now uses nine strict approaches because DINOv3 access was
-confirmed after the DINOv2-Large replacement was added. DINOv2-Large is kept as
-an open comparator, and DINOv3 ViT-B/16 is added as the gated Meta model.
+The semi-final launch now uses ten strict approaches. DINOv2-Large is kept as
+an open comparator, DINOv3 ViT-B/16 remains the gated Meta model, and RetCCL is
+added back in as a native Slideflow comparator beside the hybrid extractor set.
 
 | Slot | Approach | Source | Access | Embedding dim | Tile size | Notes |
 | ---: | --- | --- | --- | ---: | --- | --- |
@@ -851,6 +852,7 @@ an open comparator, and DINOv3 ViT-B/16 is added as the gated Meta model.
 | 7 | DINOv2-Large | `facebook/dinov2-large` | open | `1024` | `224 x 224` | open Meta baseline kept for comparison |
 | 8 | DINOv3 ViT-B/16 | `facebook/dinov3-vitb16-pretrain-lvd1689m` | gated | `768` | `224 x 224` | added after access was confirmed |
 | 9 | CHIEF | `github.com/hms-dbmi/CHIEF` + official Docker weights | request/docker | `768` | `224 x 224` | now uses real CHIEF CTransPath weights |
+| 10 | RetCCL | `retccl` | slideflow/native | `-` | Slideflow default | legacy strong comparator restored into the strict semi-final run |
 
 ### CHIEF Fix
 
@@ -947,17 +949,28 @@ Initial selected TCGA cohort:
 | MSI-H selected | `74` |
 | MSS selected | `126` |
 
-Live VM status observed after launch:
+Latest live VM status observed for the semi-final run:
 
 | Field | Value |
 | --- | --- |
-| state | `extracting_tiles` |
+| state | `failed` |
 | downloaded SVS slides | `200 / 200` |
 | downloaded slide size | `83.73 GB` |
-| TFRecord files observed | `117` |
-| feature bags | `0` at the time of this note |
-| approach outputs | `0` at the time of this note |
+| TFRecord-backed selected slides | `200` |
+| completed feature bag sets | `UNI2-h 199 / 199`, `Virchow2 199 / 199`, `Prov-GigaPath 199 / 199` |
+| approach outputs | `0` |
+| approach metrics | `0` |
 | VM disk free | about `118 GB` |
+| failure point | `CONCHv1.5` initialization |
+| failure reason | gated Hugging Face access denied for `MahmoodLab/conchv1_5` |
+
+Failure excerpt from VM `status.json`:
+
+```text
+RuntimeError: Unable to initialize any requested feature extractor.
+Tried: {'conchv1_5': 'GatedRepoError: 403 Client Error ... Access to model
+MahmoodLab/conchv1_5 is restricted and you are not in the authorized list.'}
+```
 
 ### What This Gives The Project
 
@@ -999,3 +1012,65 @@ Do not compare this run to the earlier table until it completes. The earlier
 `run-69fb62874c` table is completed evidence. The new `run-8635c038adcc` table
 is still in progress and should be treated as a live experiment until all
 approach `metrics.json` files and the final summary are written.
+
+### Recovery Update - Same-Day Relaunch On May 7, 2026
+
+After the first strict semi-final attempt failed at `CONCHv1.5`, the run was
+recovered in place instead of starting another large fresh bundle download.
+
+What changed during recovery:
+
+- verified that Hugging Face access to `MahmoodLab/conchv1_5` was no longer the
+  main blocker
+- identified the real incompatibility as the old `timm` HF-hub path expecting a
+  `config.json` layout that this repo does not provide
+- patched `vm_patch/hybrid_extractors.py` so `CONCHv1.5` downloads
+  `pytorch_model_vision.bin`, strips the `trunk.` prefix, builds the matching
+  ViT backbone manually, and loads weights without the old hub-config path
+- validated the patched manual loader against the real VM weights with no
+  missing or unexpected load keys
+- synced the patched extractor file to the VM script path
+- added `RetCCL` back as `Approach 10`
+- raised `VM_MAX_PARALLEL_APPROACHES` from `2` to `3`
+
+Why the same bundle was reused:
+
+- the existing failed bundle root was already about `87 GB`
+- reusing `run-8635c038adcc` avoided another wasteful full TCGA slide download
+
+Relaunch details:
+
+- same bundle id: `run-8635c038adcc`
+- relaunch log:
+  `/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/django_rebuild_cleaned_msi/runtime/launch_logs/run-8635c038adcc-relaunch-10a3.log`
+- relaunched process id observed: `3980754`
+- active extractor plan:
+  `uni2-h, virchow2, prov-gigapath, conchv1_5, h-optimus-0, midnight, dinov2-large, dinov3-vitb16, chief, retccl`
+
+Latest post-relaunch state observed:
+
+| Field | Value |
+| --- | --- |
+| state | `extracting_tiles` |
+| downloaded slides | `200 / 200` |
+| selected slides | `200` |
+| TFRecords observed | about `110 / 200` |
+| approach status files | `0` |
+| approach metrics files | `0` |
+| GPU | mostly idle during extraction |
+| CPU | busy during extraction |
+
+Low-tile note still being tracked:
+
+- slide `TCGA-A6-2675-01Z-00-DX1.d37847d6-c17f-44b9-b90a-84cd1946c8ab` again
+  produced only `13` extracted tiles
+- this is important to watch, but it was not the cause of the relaunch stop
+
+Current interpretation after recovery:
+
+- the earlier failed snapshot is still historically important because it records
+  the original `CONCHv1.5` stop point
+- the active semi-final run is now the relaunched `10`-approach,
+  `parallel=3` recovery on the same bundle root
+- this rerun had not yet reached `generating_features`, `CONCHv1.5` execution
+  in the new pass, or MIL training at the time of the latest note

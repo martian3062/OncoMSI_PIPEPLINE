@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import os
+import sys
 from dataclasses import dataclass
 from typing import Any, Callable
 
 import torch
 import torch.nn as nn
-from huggingface_hub import login
+from huggingface_hub import hf_hub_download, login
 from timm import create_model
 from timm.data import create_transform, resolve_data_config
 from timm.layers import SwiGLUPacked
@@ -34,9 +35,17 @@ HYBRID_EXTRACTOR_ALIASES = {
     "prism": "prism-virchow",
     "prism-virchow": "prism-virchow",
     "prism_virchow": "prism-virchow",
-    "dinov3": "dinov3",
-    "dino-v3": "dinov3",
-    "dino_v3": "dinov3",
+    "dinov2-large": "dinov2-large",
+    "dinov2_large": "dinov2-large",
+    "dinov2": "dinov2-large",
+    "dino-v2-large": "dinov2-large",
+    "dinov3-vitb16": "dinov3-vitb16",
+    "dinov3": "dinov3-vitb16",
+    "dino-v3": "dinov3-vitb16",
+    "dino_v3": "dinov3-vitb16",
+    "chief": "chief",
+    "chief-ctranspath": "chief",
+    "chief_ctp": "chief",
     "midnight": "midnight",
     "midnight-12k": "midnight",
 }
@@ -50,7 +59,9 @@ HYBRID_EXTRACTOR_NAMES = {
     "phikon-v2",
     "prov-gigapath",
     "prism-virchow",
-    "dinov3",
+    "dinov2-large",
+    "dinov3-vitb16",
+    "chief",
     "midnight",
 }
 
@@ -277,12 +288,41 @@ def _build_conch(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]]:
 
 def _build_conchv1_5(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]]:
     _configure_hf_token(hf_token)
+    weights_path = hf_hub_download(
+        repo_id="MahmoodLab/conchv1_5",
+        filename="pytorch_model_vision.bin",
+        token=hf_token or os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN"),
+    )
+    raw_state = torch.load(weights_path, map_location="cpu")
+    state_dict = raw_state.get("model", raw_state) if isinstance(raw_state, dict) else raw_state
+    cleaned_state = {
+        key.removeprefix("trunk."): value
+        for key, value in state_dict.items()
+        if isinstance(key, str) and key.startswith("trunk.")
+    }
     model = create_model(
-        "hf-hub:MahmoodLab/conchv1_5",
-        pretrained=True,
+        "vit_large_patch16_224",
+        pretrained=False,
+        img_size=448,
+        patch_size=16,
+        init_values=1e-5,
         num_classes=0,
     )
-    transform = create_transform(**resolve_data_config(model.pretrained_cfg, model=model))
+    missing, unexpected = model.load_state_dict(cleaned_state, strict=False)
+    allowed_missing = {"fc_norm.weight", "fc_norm.bias", "head.weight", "head.bias"}
+    real_missing = [item for item in missing if item not in allowed_missing]
+    if real_missing or unexpected:
+        raise RuntimeError(
+            f"CONCHv1.5 manual load mismatch. Missing={real_missing} Unexpected={unexpected}"
+        )
+    transform = transforms.Compose(
+        [
+            transforms.Resize(448),
+            transforms.CenterCrop(448),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+        ]
+    )
     return _ForwardImageEncoder(model, pool="cls"), _TensorFriendlyTransform(transform)
 
 
@@ -311,9 +351,17 @@ def _build_prov_gigapath(hf_token: str | None) -> tuple[nn.Module, Callable[...,
     return _ForwardImageEncoder(model, pool="cls"), _TensorFriendlyTransform(transform)
 
 
-def _build_dinov3(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]]:
+def _build_dinov2_large(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]]:
     _configure_hf_token(hf_token)
-    model_id = "facebook/dinov3-vitl16-pretrain-lvd1689m"
+    model_id = "facebook/dinov2-large"
+    model = AutoModel.from_pretrained(model_id)
+    transform = _build_processor_transform(model_id)
+    return _ForwardImageEncoder(model, forward_kind="pixel_values", pool="cls"), transform
+
+
+def _build_dinov3_vitb16(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]]:
+    _configure_hf_token(hf_token)
+    model_id = "facebook/dinov3-vitb16-pretrain-lvd1689m"
     model = AutoModel.from_pretrained(model_id)
     transform = _build_processor_transform(model_id)
     return _ForwardImageEncoder(model, forward_kind="pixel_values", pool="cls"), transform
@@ -333,6 +381,35 @@ def _build_midnight(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]
     return _ForwardImageEncoder(model, forward_kind="pixel_values", pool="cls_mean"), _TensorFriendlyTransform(transform)
 
 
+def _build_chief(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]]:
+    repo_path = os.environ.get("CHIEF_REPO_PATH", "/home/pardeep/models/CHIEF")
+    weights_path = os.environ.get("CHIEF_CTRANSPATH_WEIGHTS", "/home/pardeep/models/CHIEF/model_weight/CHIEF_CTransPath.pth")
+    if not os.path.isdir(repo_path):
+        raise FileNotFoundError(
+            f"CHIEF repo not found at {repo_path}. Clone https://github.com/hms-dbmi/CHIEF.git first."
+        )
+    if not os.path.exists(weights_path):
+        raise FileNotFoundError(
+            f"CHIEF CTransPath weights not found at {weights_path}. Install CHIEF_CTransPath.pth first."
+        )
+    if repo_path not in sys.path:
+        sys.path.insert(0, repo_path)
+    from models.ctran import ctranspath
+
+    model = ctranspath()
+    model.head = nn.Identity()
+    state = torch.load(weights_path, map_location="cpu")
+    model.load_state_dict(state.get("model", state), strict=True)
+    transform = transforms.Compose(
+        [
+            transforms.Resize(224),
+            transforms.ToTensor(),
+            transforms.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+        ]
+    )
+    return model, _TensorFriendlyTransform(transform)
+
+
 SPECS = {
     "conch": ExtractorSpec("conch", 512, _build_conch),
     "conchv1_5": ExtractorSpec("conchv1_5", None, _build_conchv1_5, aliases=("conch-v1.5", "conch-v15", "conchv1.5")),
@@ -342,7 +419,9 @@ SPECS = {
     "h-optimus-0": ExtractorSpec("h-optimus-0", 1536, _build_h_optimus_0, aliases=("h_optimus_0",)),
     "phikon-v2": ExtractorSpec("phikon-v2", 1024, _build_phikon_v2, aliases=("phikon_v2",)),
     "prov-gigapath": ExtractorSpec("prov-gigapath", None, _build_prov_gigapath, aliases=("prov_gigapath",)),
-    "dinov3": ExtractorSpec("dinov3", 1024, _build_dinov3, aliases=("dino-v3", "dino_v3")),
+    "dinov2-large": ExtractorSpec("dinov2-large", 1024, _build_dinov2_large, aliases=("dinov2_large", "dinov2", "dino-v2-large")),
+    "dinov3-vitb16": ExtractorSpec("dinov3-vitb16", 768, _build_dinov3_vitb16, aliases=("dinov3", "dino-v3", "dino_v3")),
+    "chief": ExtractorSpec("chief", 768, _build_chief, aliases=("chief-ctranspath", "chief_ctp")),
     "midnight": ExtractorSpec("midnight", None, _build_midnight, aliases=("midnight-12k",)),
 }
 

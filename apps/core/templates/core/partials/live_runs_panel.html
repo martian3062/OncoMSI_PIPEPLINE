@@ -7,7 +7,7 @@
 >
   <div class="section-head">
     <h3>Live Runs</h3>
-    <span>Refreshes every 20s</span>
+    <span>Refreshes every 12s</span>
   </div>
   <div class="live-runs-grid">
     {% for run in live_runs %}
@@ -127,6 +127,9 @@
           {% endif %}
           {% if link.mean_recall_display != "-" or link.mean_specificity_display != "-" %}
           <span class="muted">Recall {{ link.mean_recall_display }} | Spec {{ link.mean_specificity_display }}</span>
+          {% endif %}
+          {% if link.mean_threshold_display != "-" %}
+          <span class="muted">Best threshold {{ link.mean_threshold_display }}</span>
           {% endif %}
           {% if link.available_bag_slide_count_display != "-" or link.missing_bag_slide_count %}
           <span class="muted">Bags {{ link.available_bag_slide_count_display }} | Missing {{ link.missing_bag_slide_count }}</span>

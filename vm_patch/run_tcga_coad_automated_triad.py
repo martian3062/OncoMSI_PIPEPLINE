@@ -43,18 +43,18 @@ EXTRACTION_WORKERS = 1
 DEFAULT_SLIDE_LIMIT = 18
 DEFAULT_FOLD_COUNT = 3
 DEFAULT_FEATURE_EXTRACTOR_CANDIDATES = (
-    "conchv1_5",
-    "phikon-v2",
+    "uni2-h",
+    "virchow2",
     "prov-gigapath",
-    "prism-virchow",
-    "chief-ctranspath",
-    "dinov3",
+    "conchv1_5",
+    "h-optimus-0",
     "midnight",
+    "dinov2-large",
+    "dinov3-vitb16",
+    "chief",
 )
 GENERIC_FEATURE_EXTRACTORS = {"resnet50_imagenet", "resnet50"}
-EXTRACTOR_PROXY_NAMES = {
-    "chief-ctranspath": "ctranspath",
-}
+EXTRACTOR_PROXY_NAMES = {}
 DEFAULT_MIL_FALLBACKS = {
     "Approach1": ("transmil",),
     "Approach2": ("attention_mil",),
@@ -140,7 +140,8 @@ def requested_feature_extractors_for_spec(
 ) -> list[str]:
     requested = parse_candidate_list(spec.get("feature_extractors"))
     requested.extend(parse_candidate_list(spec.get("feature_extractor")))
-    requested.extend(default_candidates or requested_feature_extractors(config))
+    if not requested:
+        requested.extend(default_candidates or requested_feature_extractors(config))
     requested = parse_candidate_list(requested)
     if bool(spec.get("allow_generic_fallback", config["request"].get("allow_generic_fallback", False))):
         return requested

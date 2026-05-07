@@ -9,6 +9,92 @@ The short version is:
 - The real failures were not only "training bugs." They were mostly integration-surface, environment, and recovery-state problems.
 - We solved that by moving to a hybrid architecture instead of a pure Slideflow architecture.
 
+## Quick Comparison
+
+| Aspect | Slideflow Alone | Our Hybrid |
+| --- | --- | --- |
+| Core idea | One framework handles most of the pathology flow | Keep `Slideflow` for stable pathology pieces, add custom adapters and orchestration around it |
+| Best use case | Stable, already-supported extractors and standard MIL workflows | Mixed modern foundation models, gated HF models, live VM runs, recovery-aware experimentation |
+| Extractor onboarding | Narrower and more framework-dependent | Much more flexible through `vm_patch/hybrid_extractors.py` |
+| New model support | Harder when the model needs custom transforms, pooling, or loading | Custom per-model builders for `UNI2-H`, `Virchow2`, `Prov-GigaPath`, `CONCH`, `DINOv3`, `CHIEF`, and others |
+| Hugging Face gated models | More awkward | Explicit token-aware loading built in |
+| Output-shape normalization | Limited by the native path | Custom wrappers enforce consistent embedding outputs |
+| Fallback control | Easier to drift into silent proxy behavior | Much stricter, clearer "use requested extractor or fail" behavior |
+| WSI / tiling / TFRecords | Strong | Still uses `Slideflow` for these strong parts |
+| MIL training entrypoints | Strong | Still uses `Slideflow` MIL entrypoints, but with stronger bag filtering and orchestration |
+| Recovery after partial failures | Weaker bundle truth | Better per-approach recovery and resync behavior |
+| Frontend truthfulness | Can lag behind stale bundle summaries | Django sync reads live/per-approach truth and VM runtime state |
+| Storage awareness | Not enough by itself for large multi-model runs | Added cleanup, archiving, bag filtering, and safer execution patterns |
+| VM orchestration | Not really a control-plane solution | Integrated with Django plus VM launch/sync flow |
+| Dashboard / UI integration | Not built for that by itself | Full control-plane/dashboard integration |
+| External cohort metadata flow | Minimal by default | Wired into the run model and sync design |
+| Engineering complexity | Simpler if your models fit its rails | More moving parts, but handles this project's needs better |
+| Research flexibility | Lower for fast-changing foundation-model work | Higher for experimentation across many pathology encoders |
+| Main weakness | Too rigid once the project moved beyond native supported extractors | More custom code to maintain |
+| Main strength | Clean pathology core for standard workflows | Practical end-to-end system for modern models, VM orchestration, recovery, and live product-style tracking |
+
+## What The Hybrid Layer Actually Is
+
+In this repo's hybrid extractor layer, `Trident`, `Timestamp`, or some separate
+new pathology framework is not what is being used.
+
+What is actually in the layer:
+
+- a custom adapter file: `vm_patch/hybrid_extractors.py`
+- it wraps multiple model sources behind one common extractor interface for the
+  runner
+- it registers those models back into `Slideflow` as custom torch extractors,
+  so the rest of the pipeline can still call them in a unified way
+
+What models it currently supports:
+
+- `Virchow2`
+- `PRISM` via `Virchow`
+- `UNI2-H`
+- `H-Optimus-0`
+- `CONCH`
+- `CONCHv1.5`
+- `Phikon-v2`
+- `Prov-GigaPath`
+- `DINOv2-Large`
+- `DINOv3 ViT-B/16`
+- `Midnight`
+- `CHIEF`
+
+What libraries and framework pieces it uses under the hood:
+
+- `timm` for several pathology vision encoders
+- `transformers` for HF-hosted models like `Phikon`, `DINOv2`, `DINOv3`, and
+  `Midnight`
+- `huggingface_hub` login and token wiring for gated models
+- `torch` and `torchvision.transforms`
+- optional `CONCH` package from Mahmood Lab GitHub
+- official `CHIEF` repo plus local weight loading for `CHIEF`
+
+What the hybrid layer is doing technically:
+
+- normalizes model names and aliases like `dinov3`, `midnight-12k`, and
+  `chief-ctranspath`
+- decides whether a name should go through the `Slideflow` native backend or
+  the hybrid backend
+- builds model-specific preprocess transforms
+- handles gated Hugging Face auth
+- wraps different forward APIs into one common output contract
+- applies pooling fixes like `cls`, `mean`, or `cls_mean`
+- makes tensor-unfriendly preprocess pipelines work inside the bag-generation
+  path
+- registers everything into `Slideflow` through `register_torch(...)`
+
+So the important point is:
+
+- not a full replacement framework like `Trident`
+- not `Timestamp`
+- not a separate inference service
+
+It is a custom adapter layer that lets `Slideflow` keep doing tiling,
+`TFRecords`, and `MIL`, while newer foundation models are plugged in through
+`timm`, `transformers`, and custom wrappers.
+
 ## 1. What Slideflow Was Good At
 
 Slideflow was not a bad choice in general. In this project it was still strong at:

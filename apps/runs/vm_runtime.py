@@ -131,6 +131,104 @@ def launch_run_on_vm(run: Run) -> dict[str, Any]:
     }
 
 
+def _bundle_root_for_run(run: Run) -> PurePosixPath | None:
+    if run.remote_status_path and run.remote_status_path.startswith("/"):
+        return PurePosixPath(run.remote_status_path).parent
+    if run.bundle_config_path and run.bundle_config_path.startswith("/"):
+        config_root = PurePosixPath(run.bundle_config_path).parent.parent.parent
+        return config_root / "automation" / "tcga_slide_triads" / run.run_id
+    return None
+
+
+def _read_live_runtime_snapshot(run: Run) -> dict[str, Any]:
+    target = default_vm_target()
+    bundle_root = _bundle_root_for_run(run)
+    if bundle_root is None:
+        return {}
+
+    payload = {
+        "bundle_root": str(bundle_root),
+        "config_path": run.bundle_config_path,
+        "launch_log_path": run.remote_launch_log_path,
+    }
+    remote_script = f"""
+import json
+import re
+from pathlib import Path
+
+payload = json.loads({json.dumps(json.dumps(payload))})
+bundle_root = Path(payload["bundle_root"])
+config_path = Path(payload["config_path"]) if payload.get("config_path") else None
+launch_log_path = Path(payload["launch_log_path"]) if payload.get("launch_log_path") else None
+data = {{
+    "bundle_root": str(bundle_root),
+    "spec_count": 0,
+    "selected_slide_count": None,
+    "current_extractor": "",
+    "extractor_sequence": [],
+    "bag_counts": {{}},
+    "approach_status_count": 0,
+    "approach_metrics_count": 0,
+    "missing_bag_slides": [],
+    "missing_bag_count": 0,
+}}
+
+if config_path and config_path.exists():
+    config = json.loads(config_path.read_text())
+    data["spec_count"] = len(config.get("specs", []))
+    request = config.get("request", {{}})
+    data["selected_slide_count"] = request.get("slide_limit") or request.get("requested_slide_limit")
+
+log_pattern = re.compile(r"\\[(\\d{{2}}:\\d{{2}}:\\d{{2}})\\].*Using feature extractor:\\s+([^\\s]+)")
+if launch_log_path and launch_log_path.exists():
+    for line in launch_log_path.read_text(errors="ignore").splitlines():
+        match = log_pattern.search(line)
+        if not match:
+            continue
+        data["extractor_sequence"].append({{"time": match.group(1), "extractor": match.group(2)}})
+    if data["extractor_sequence"]:
+        data["current_extractor"] = data["extractor_sequence"][-1]["extractor"]
+
+manifest_path = bundle_root / "slideflow_project" / "tfrecords" / "256px_128um" / "manifest.json"
+manifest_stems = set()
+if manifest_path.exists():
+    manifest = json.loads(manifest_path.read_text())
+    manifest_stems = {{name[:-10] if name.endswith(".tfrecords") else name for name in manifest.keys()}}
+    if not data["selected_slide_count"]:
+        data["selected_slide_count"] = len(manifest_stems)
+
+bags_root = bundle_root / "slideflow_project" / "bags"
+current_bag_stems = set()
+if bags_root.exists():
+    for bag_dir in sorted([path for path in bags_root.iterdir() if path.is_dir()]):
+        pt_count = sum(1 for _ in bag_dir.glob("*.pt"))
+        idx_count = sum(1 for _ in bag_dir.glob("*.index.npz"))
+        data["bag_counts"][bag_dir.name] = {{"pt": pt_count, "index": idx_count}}
+        if data["current_extractor"] and bag_dir.name.startswith(data["current_extractor"] + "_"):
+            current_bag_stems = {{path.stem for path in bag_dir.glob("*.pt")}}
+
+if manifest_stems and current_bag_stems:
+    missing = sorted(manifest_stems - current_bag_stems)
+    data["missing_bag_slides"] = missing[:10]
+    data["missing_bag_count"] = len(missing)
+elif manifest_stems and data["current_extractor"]:
+    data["missing_bag_slides"] = sorted(manifest_stems)[:10]
+    data["missing_bag_count"] = len(manifest_stems)
+
+approaches_root = bundle_root / "approaches"
+if approaches_root.exists():
+    data["approach_status_count"] = sum(1 for _ in approaches_root.rglob("status.json"))
+    data["approach_metrics_count"] = sum(1 for _ in approaches_root.rglob("metrics.json"))
+
+print(json.dumps(data))
+"""
+    command = f"/usr/bin/python3 - <<'PY'\n{remote_script}\nPY"
+    result = run_shell(target, command, timeout=120)
+    if result.returncode != 0 or not result.stdout.strip():
+        return {}
+    return json.loads(result.stdout)
+
+
 def sync_run_status(run: Run) -> dict[str, Any]:
     target = default_vm_target()
     if (not run.remote_status_path or "<bundle_id>" in run.remote_status_path) and run.bundle_config_path:
@@ -146,6 +244,12 @@ def sync_run_status(run: Run) -> dict[str, Any]:
     if "label_counts" in status_payload:
         run.label_counts = status_payload["label_counts"]
     run.save(update_fields=["state", "selected_slide_count", "label_counts", "updated_at"])
+
+    live_runtime = _read_live_runtime_snapshot(run)
+    current_extractor = str(live_runtime.get("current_extractor") or "").strip()
+    if current_extractor:
+        run.feature_extractor_used = current_extractor
+        run.save(update_fields=["feature_extractor_used", "updated_at"])
 
     approach_states: list[str] = []
     for link in run.approach_links.select_related("approach_template"):
@@ -247,6 +351,9 @@ def sync_run_status(run: Run) -> dict[str, Any]:
         elif any(state == "spawned" for state in approach_states):
             run.state = "training_parallel"
         run.save(update_fields=["state", "updated_at"])
+    elif live_runtime.get("approach_status_count") or live_runtime.get("approach_metrics_count"):
+        run.state = "training_parallel"
+        run.save(update_fields=["state", "updated_at"])
 
     if not run.feature_extractor_used:
         used = [item for item in (run.feature_extractor_candidates or []) if item]
@@ -258,6 +365,7 @@ def sync_run_status(run: Run) -> dict[str, Any]:
         "run_id": run.run_id,
         "status": status_payload,
         "final_summary": summary,
+        "live_runtime": live_runtime,
     }
 
 
