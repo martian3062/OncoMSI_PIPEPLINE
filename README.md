@@ -652,3 +652,31 @@ The current platform delivers:
 This gives the project a strong base for deeper experiment analytics,
 production hardening, archive comparison, and future expansion into additional
 foundation models.
+
+## Latest Completed Run (May 7, 2026)
+
+Most recent full run on VM:
+
+- run id: `run-69fb62874c`
+- state: `completed`
+- selected slides: `180`
+- label mix: `74 MSI-H`, `106 MSS`
+- best approach: `Approach3-Prov-GigaPath`
+
+Per-approach metrics:
+
+| Approach | Extractor used | AUROC | F1 macro | AUPRC | Bal Acc | MSI-H Recall | Specificity | State |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Approach1-CONCHv1.5 | `phikon-v2` | `0.9243` | `0.9066` | `0.9363` | `0.9083` | `0.9255` | `0.8911` | `completed` |
+| Approach2-Phikon-v2 | `phikon-v2` | `0.9422` | `0.9289` | `0.9489` | `0.9243` | `0.9718` | `0.8768` | `completed` |
+| Approach3-Prov-GigaPath | `prov-gigapath` | `0.9555` | `0.9302` | `0.9692` | `0.9320` | `0.9336` | `0.9304` | `completed` |
+| Approach4-PRISM | `prism-virchow` | `0.9402` | `0.9044` | `0.9603` | `0.9008` | `0.9427` | `0.8589` | `completed` |
+| Approach5-CHIEF | `phikon-v2` | `0.9297` | `0.8948` | `0.9504` | `0.8966` | `0.9164` | `0.8768` | `completed` |
+| Approach6-DINOv3 | `phikon-v2` | `0.9315` | `0.9018` | `0.9487` | `0.9000` | `0.9518` | `0.8482` | `completed` |
+| Approach7-Midnight-12k | `midnight` | `0.9535` | `0.9394` | `0.9632` | `0.9390` | `0.9636` | `0.9143` | `completed` |
+
+External cohort note:
+
+- run config requested `CPTAC-COAD`, `DACHS`, and `PAIP`
+- at runtime, those cohort annotation files were not present on VM, so these
+  results are still TCGA-only for now

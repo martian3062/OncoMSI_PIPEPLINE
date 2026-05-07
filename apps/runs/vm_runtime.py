@@ -18,12 +18,9 @@ def build_bundle_config(run: Run, target=None) -> dict[str, Any]:
     bundle_root = PurePosixPath(target.project_root) / "automation" / "tcga_slide_triads" / run.run_id
     status_path = bundle_root / "status.json"
     links = list(run.approach_links.select_related("approach_template").all())
-    hybrid_links = [
-        link for link in links
-        if str((link.trainer_params or {}).get("extractor_backend", "")).lower() == "hybrid"
-    ]
-    sequential_execution = len(links) > 4 or len(hybrid_links) > 3
-    max_parallel_approaches = 1 if sequential_execution else max(1, len(links) or 1)
+    requested_parallel = max(1, int(getattr(settings, "VM_MAX_PARALLEL_APPROACHES", 2)))
+    max_parallel_approaches = min(requested_parallel, max(1, len(links) or 1))
+    approach_execution_mode = "parallel" if max_parallel_approaches > 1 else "sequential"
     feature_extractor = ",".join(run.feature_extractor_candidates or [run.feature_extractor_used]).strip(",")
     shared = {
         "bundle_id": run.run_id,
@@ -42,7 +39,7 @@ def build_bundle_config(run: Run, target=None) -> dict[str, Any]:
         "tile_px": run.tile_px,
         "tile_um": run.tile_um,
         "max_parallel_approaches": max_parallel_approaches,
-        "approach_execution_mode": "sequential" if sequential_execution else "parallel",
+        "approach_execution_mode": approach_execution_mode,
         "max_tiles_per_slide": run.max_tiles_per_slide,
         "mpp_override": 0.25,
         "qc_method": "otsu",

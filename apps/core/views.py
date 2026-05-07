@@ -46,6 +46,19 @@ STATE_PROGRESS = {
     "failed": 100,
 }
 
+LIVE_STATES = {
+    "matching_annotations",
+    "downloading_slides",
+    "extracting_tiles",
+    "retrying_tiles",
+    "generating_features",
+    "prepared",
+    "training_parallel",
+    "training",
+    "spawned",
+    "pending",
+}
+
 
 def format_duration(delta: timedelta | None) -> str:
     if not delta:
@@ -416,7 +429,11 @@ def launch_run(request: HttpRequest) -> HttpResponse:
 
 
 def hydrate_live_runs(sync_remote: bool = True):
-    runs = list(Run.objects.order_by("-created_at")[:4])
+    recent_cutoff = timezone.now() - timedelta(hours=8)
+    runs = list(
+        Run.objects.filter(state__in=LIVE_STATES, updated_at__gte=recent_cutoff)
+        .order_by("-updated_at")[:6]
+    )
     hydrated_runs = []
     for run in runs:
         hydrated = hydrate_run(run, allow_sync_failure=True, sync_remote=sync_remote)

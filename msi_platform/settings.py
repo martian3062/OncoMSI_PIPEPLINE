@@ -490,3 +490,4 @@ MSI_DEFAULT_APPROACHES = [
         },
     },
 ]
+VM_MAX_PARALLEL_APPROACHES = int(os.getenv("VM_MAX_PARALLEL_APPROACHES", "2"))
