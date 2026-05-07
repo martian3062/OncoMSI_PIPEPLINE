@@ -8,6 +8,67 @@ surface live results in a single integrated web application.
 This repository is not a static demo dashboard. It is a working orchestration
 layer around a real VM-side pathology pipeline.
 
+## Results Snapshot
+
+This top section is the single combined scoreboard for the last completed
+`hybrid-02` run and the preserved legacy 7-approach baseline. The detailed
+writeups remain later in this README, but the duplicated summary tables are
+collapsed here so the opening is easier to scan.
+
+### Combined Completed Results
+
+| Track | Approach | Extractor used | AUROC | F1 macro | AUPRC | Bal Acc | MSI-H Recall | Specificity | Best threshold | State |
+| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| Latest completed `run-69fb62874c` | Approach2-Phikon-v2 | `phikon-v2` | `0.9422` | `0.9289` | `0.9489` | `0.9243` | `0.9718` | `0.8768` | `-` | `completed` |
+| Latest completed `run-69fb62874c` | Approach3-Prov-GigaPath | `prov-gigapath` | `0.9555` | `0.9302` | `0.9692` | `0.9320` | `0.9336` | `0.9304` | `-` | `completed` |
+| Latest completed `run-69fb62874c` | Approach4-PRISM | `prism-virchow` | `0.9402` | `0.9044` | `0.9603` | `0.9008` | `0.9427` | `0.8589` | `-` | `completed` |
+| Latest completed `run-69fb62874c` | Approach7-Midnight-12k | `midnight` | `0.9535` | `0.9394` | `0.9632` | `0.9390` | `0.9636` | `0.9143` | `-` | `completed` |
+| Legacy baseline `run-c167be196bac` | Approach 1 - Virchow | `virchow` | `0.9265` | `0.8915` | `-` | `-` | `-` | `-` | `0.4605` | `completed` |
+| Legacy baseline `run-c167be196bac` | Approach 2 - RetCCL | `retccl` | `0.9444` | `0.9114` | `-` | `-` | `-` | `-` | `0.3997` | `completed` |
+| Legacy baseline `run-c167be196bac` | Approach 3 - CTransPath | `ctranspath` | `0.9281` | `0.9046` | `-` | `-` | `-` | `-` | `0.4222` | `completed` |
+| Legacy baseline `run-c167be196bac` | Approach 4 - CONCH | `conch` | `0.9329` | `0.9106` | `-` | `-` | `-` | `-` | `0.4131` | `completed` |
+| Legacy baseline `run-c167be196bac` | Approach 5 - Virchow2 | `virchow2` | `0.9684` | `0.9388` | `-` | `-` | `-` | `-` | `0.3612` | `completed` |
+| Legacy baseline `run-c167be196bac` | Approach 6 - UNI2-H | `uni2-h` | `0.9819` | `0.9660` | `-` | `-` | `-` | `-` | `0.3940` | `completed` |
+| Legacy baseline `run-c167be196bac` | Approach 7 - H-Optimus-0 | `h-optimus-0` | `0.9594` | `0.9452` | `-` | `-` | `-` | `-` | `0.3003` | `completed` |
+
+### Quick Read
+
+- best legacy baseline result: `Approach 6 - UNI2-H` with AUROC `0.9819`
+- best latest completed `hybrid-02` result: `Approach3-Prov-GigaPath` with AUROC `0.9555`
+- top-of-file note: later sections keep the full run notes and branch history, so
+  this section replaces the duplicate opening summary instead of deleting it
+
+### Semi-Final Currently Selected Roster
+
+This is the active strict semi-final roster for the in-progress `200`-slide
+foundation-model run. These are the models currently selected for the fresh
+semi-final benchmark, not completed result rows yet.
+
+| Slot | Semi-final approach | Extractor / model used | Access | Status in plan |
+| ---: | --- | --- | --- | --- |
+| 1 | UNI2-h | `MahmoodLab/UNI2-h` | gated | selected |
+| 2 | Virchow2 | `paige-ai/Virchow2` | gated | selected |
+| 3 | Prov-GigaPath | `prov-gigapath/prov-gigapath` | gated | selected |
+| 4 | CONCHv1.5 | `MahmoodLab/conchv1_5` | gated | selected |
+| 5 | H-Optimus-0 | `bioptimus/H-optimus-0` | open | selected |
+| 6 | Midnight-12k | `kaiko-ai/midnight` | open | selected |
+| 7 | DINOv2-Large | `facebook/dinov2-large` | open | selected |
+| 8 | DINOv3 ViT-B/16 | `facebook/dinov3-vitb16-pretrain-lvd1689m` | gated | selected |
+| 9 | CHIEF | `github.com/hms-dbmi/CHIEF` + official Docker weights | request/docker | selected |
+
+### Semi-Final Current Run Settings
+
+| Item | Value |
+| --- | --- |
+| run intent | `semi-final` |
+| active run id | `run-8635c038adcc` |
+| requested slides | `200` |
+| folds | `10` |
+| repeats | `1` |
+| max tiles per slide | `256` |
+| max parallel approaches | `2` |
+| generic fallback | disabled |
+
 ## Hybrid Direction
 
 The next architectural direction is a hybrid pipeline:
@@ -680,3 +741,261 @@ External cohort note:
 - run config requested `CPTAC-COAD`, `DACHS`, and `PAIP`
 - at runtime, those cohort annotation files were not present on VM, so these
   results are still TCGA-only for now
+
+## Semi-Final Branch Addendum - Fresh 200-Slide Foundation Run
+
+### Timestamp
+
+- local documentation time: `2026-05-07 09:10:51 +05:30`
+- VM launch day: `May 7, 2026`
+- active branch intent: `semi-final`
+- active VM run id: `run-8635c038adcc`
+- active VM process id at launch: `3146389`
+
+This section is an additive research log. It does not replace the earlier
+`hybrid-02` notes or the completed `run-69fb62874c` metrics above. Those remain
+important because they show the last completed TCGA-only baseline before the
+strict semi-final rerun.
+
+### Why We Made This Update
+
+The previous completed run was useful, but it was not yet defensible as a final
+research benchmark for three reasons:
+
+1. Some requested approaches silently resolved to another extractor.
+2. External validation was configured as metadata, but CPTAC-COAD annotations
+   were not yet present on the VM.
+3. The VM contained old run artifacts, which made it harder to reason about a
+   clean fresh experiment state.
+
+The semi-final update fixes those gaps by making the run stricter, cleaner, and
+better documented.
+
+### What Was Changed
+
+#### 1. Clean Fresh VM State
+
+Old generated VM artifacts were removed before the new launch.
+
+Cleaned generated paths:
+
+```text
+/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads
+/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/django_rebuild_cleaned_msi/runtime/bundle_configs
+/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/django_rebuild_cleaned_msi/runtime/launch_logs
+/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/django_rebuild_cleaned_msi/runtime/run_status
+/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/django_rebuild_cleaned_msi/runtime/tmp
+```
+
+Space recovery:
+
+| Item | Before | After |
+| --- | ---: | ---: |
+| `tcga_slide_triads` generated runs | `153 GB` | `4 KB` |
+| VM free disk after cleanup | about `112 GB` | about `265 GB` |
+
+Docker/build cleanup was also performed because the CHIEF container pull needed
+more clean disk headroom.
+
+#### 2. Slide Count Increased To 200
+
+The new semi-final run uses:
+
+| Setting | Value |
+| --- | --- |
+| requested slides | `200` |
+| folds | `10` |
+| repeats | `1` |
+| max tiles per slide | `256` |
+| max parallel approaches | `2` |
+| generic fallback | disabled |
+
+The reason for increasing to `200` slides is to reduce small-cohort noise while
+still staying practical on the L4 24 GB GPU and 32 GB RAM VM.
+
+#### 3. Controlled Parallelism
+
+The VM is configured for controlled parallel execution:
+
+```env
+VM_MAX_PARALLEL_APPROACHES=2
+```
+
+This gives faster throughput than fully sequential execution, but avoids trying
+to run all foundation extractors together on one L4 GPU. It is the safer middle
+point for this VM.
+
+#### 4. Strict Extractor Resolution
+
+The runner was changed so each approach uses its own requested extractor. If an
+extractor cannot load, that approach should fail clearly instead of silently
+falling back to Phikon, CTransPath, ResNet, or another proxy.
+
+This matters because the leaderboard should answer: "How did this foundation
+model perform?" not "Which fallback happened to run?"
+
+### Final Semi-Final Roster
+
+The semi-final launch now uses nine strict approaches because DINOv3 access was
+confirmed after the DINOv2-Large replacement was added. DINOv2-Large is kept as
+an open comparator, and DINOv3 ViT-B/16 is added as the gated Meta model.
+
+| Slot | Approach | Source | Access | Embedding dim | Tile size | Notes |
+| ---: | --- | --- | --- | ---: | --- | --- |
+| 1 | UNI2-h | `MahmoodLab/UNI2-h` | gated | `1536` | `224 x 224` | strongest prior legacy performer |
+| 2 | Virchow2 | `paige-ai/Virchow2` | gated | `2560` | `224 x 224` | strong CRC/pathology foundation encoder |
+| 3 | Prov-GigaPath | `prov-gigapath/prov-gigapath` | gated | `1536` | `256 x 256` | best true hybrid-02 performer |
+| 4 | CONCHv1.5 | `MahmoodLab/conchv1_5` | gated | `768` | model transform driven | fixed to run as CONCH, not Phikon fallback |
+| 5 | H-Optimus-0 | `bioptimus/H-optimus-0` | open | `1536` | `224 x 224` | proven legacy top performer |
+| 6 | Midnight-12k | `kaiko-ai/midnight` | open | `1536` | `224 x 224` | strong hybrid-02 result and high F1 macro |
+| 7 | DINOv2-Large | `facebook/dinov2-large` | open | `1024` | `224 x 224` | open Meta baseline kept for comparison |
+| 8 | DINOv3 ViT-B/16 | `facebook/dinov3-vitb16-pretrain-lvd1689m` | gated | `768` | `224 x 224` | added after access was confirmed |
+| 9 | CHIEF | `github.com/hms-dbmi/CHIEF` + official Docker weights | request/docker | `768` | `224 x 224` | now uses real CHIEF CTransPath weights |
+
+### CHIEF Fix
+
+CHIEF is no longer represented by a `chief-ctranspath -> ctranspath` proxy.
+
+What was done:
+
+- cloned/updated the official CHIEF GitHub repository on the VM
+- pulled the official CHIEF Docker image after cleaning disk
+- extracted model weights from the container
+- placed the CTransPath checkpoint at the strict runner path
+
+Verified checkpoint:
+
+```text
+/home/pardeep/models/CHIEF/model_weight/CHIEF_CTransPath.pth
+```
+
+Observed size:
+
+```text
+107 MB
+```
+
+The strict CHIEF loader now expects this file. If it is missing in the future,
+CHIEF should fail clearly instead of using a substitute extractor.
+
+### DINOv3 Fix
+
+DINOv3 was added after access was confirmed for:
+
+```text
+facebook/dinov3-vitb16-pretrain-lvd1689m
+```
+
+The model is loaded through Hugging Face Transformers with the configured token.
+It is now a separate approach instead of replacing DINOv2-Large.
+
+### CPTAC-COAD External Cohort Preparation
+
+CPTAC-COAD annotations were fetched from cBioPortal study:
+
+```text
+coad_cptac_2019
+```
+
+Generated files:
+
+```text
+runtime/annotations/cptac_coad_annotations.csv
+runtime/annotations/cptac_coad_clinical_sample_long.csv
+```
+
+VM path used by the semi-final run:
+
+```text
+/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/django_rebuild_cleaned_msi/runtime/annotations/cptac_coad_annotations.csv
+```
+
+CPTAC-COAD label counts:
+
+| Label | Count |
+| --- | ---: |
+| `MSI-H` | `24` |
+| `MSS` | `81` |
+| total labeled samples | `105` |
+
+Important note: the annotations are now present and attached to the run config.
+The actual external validation still depends on the runner finding compatible
+CPTAC slide/image inputs for those sample IDs.
+
+### Active Fresh Run
+
+The fresh run launched from the Django control plane with this experiment name:
+
+```text
+tcga3-semi-final-200x10f-uni2h-virchow2-gigapath-conch15-hoptimus-midnight-dinov2large-dinov3vitb16-chief-256tiles
+```
+
+Run paths:
+
+```text
+status: /home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/automation/tcga_slide_triads/run-8635c038adcc/status.json
+log:    /home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/django_rebuild_cleaned_msi/runtime/launch_logs/run-8635c038adcc.log
+config: /home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/django_rebuild_cleaned_msi/runtime/bundle_configs/run-8635c038adcc.json
+```
+
+Initial selected TCGA cohort:
+
+| Field | Value |
+| --- | ---: |
+| matched TCGA DX slides | `426` |
+| selected slides | `200` |
+| MSI-H selected | `74` |
+| MSS selected | `126` |
+
+Live VM status observed after launch:
+
+| Field | Value |
+| --- | --- |
+| state | `extracting_tiles` |
+| downloaded SVS slides | `200 / 200` |
+| downloaded slide size | `83.73 GB` |
+| TFRecord files observed | `117` |
+| feature bags | `0` at the time of this note |
+| approach outputs | `0` at the time of this note |
+| VM disk free | about `118 GB` |
+
+### What This Gives The Project
+
+This update moves the project from a development benchmark toward a more
+defensible semi-final benchmark.
+
+It gives us:
+
+- a clean VM artifact state before launch
+- a larger 200-slide TCGA cohort than the previous 180-slide run
+- strict no-proxy extractor behavior
+- real CHIEF source and checkpoint availability
+- DINOv3 ViT-B/16 added as a separate gated approach
+- DINOv2-Large retained as an open comparator
+- CPTAC-COAD labels present on the VM for external cohort work
+- frontend defaults aligned with the actual semi-final roster
+- the metric schema needed for AUROC, F1 macro, AUPRC, balanced accuracy,
+  MSI-H recall, specificity, precision, Brier score, and best threshold
+
+### Expected Output Metrics
+
+When the run completes, each approach should report:
+
+| Metric | Purpose |
+| --- | --- |
+| AUROC | ranking/separation quality |
+| F1 macro | balanced class-wise F1 |
+| AUPRC | precision-recall performance under class imbalance |
+| balanced accuracy | average of sensitivity and specificity |
+| MSI-H recall | sensitivity for MSI-H detection |
+| specificity | MSS true-negative rate |
+| precision | positive predictive value |
+| Brier score | probability calibration error |
+| best threshold | validation-selected operating threshold |
+
+### Current Interpretation
+
+Do not compare this run to the earlier table until it completes. The earlier
+`run-69fb62874c` table is completed evidence. The new `run-8635c038adcc` table
+is still in progress and should be treated as a live experiment until all
+approach `metrics.json` files and the final summary are written.
