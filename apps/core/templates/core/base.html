@@ -5,51 +5,23 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ app_name }}</title>
-  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
-  <script defer src="https://unpkg.com/alpinejs@3.14.9/dist/cdn.min.js"></script>
-  <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
   <link rel="stylesheet" href="{% static 'core/app.css' %}?v={{ asset_version }}">
 </head>
 <body>
-  <div class="ambient-bg" aria-hidden="true">
-    <div class="ambient-orb ambient-orb-one"></div>
-    <div class="ambient-orb ambient-orb-two"></div>
-    <div class="ambient-grid"></div>
-  </div>
-  <div class="shell">
-    <aside class="sidebar glass">
+  <div class="page-shell">
+    <header class="site-header">
       <div>
         <p class="eyebrow">OncoMSI</p>
         <h1>{{ app_name }}</h1>
-        <p class="lede">Lightweight live MSI orchestration with hybrid-02 model tracking.</p>
       </div>
-      <div class="slot-list">
-        {% for slot in approach_slots %}
-        <section class="slot-card">
-          <p class="slot-kicker">{{ slot.key|upper }}</p>
-          <h3>{{ slot.label }}</h3>
-          <p>{{ slot.model_family }} | {{ slot.default_params.feature_extractor|default:"extractor pending" }}</p>
-          <p class="muted">
-            {% if slot.default_params.launch_enabled %}
-            Ready on VM
-            {% elif slot.default_params.extractor_backend %}
-            Prepared, model access pending
-            {% else %}
-            Adapter needed
-            {% endif %}
-          </p>
-        </section>
-        {% endfor %}
-      </div>
-    </aside>
-    <main class="content">
-      <div class="top-links">
-        <a href="{% url 'dashboard' %}">Dashboard</a>
-        <a href="{% url 'history-page' %}">History</a>
-      </div>
+      <nav class="site-nav">
+        <a href="{% url 'results-page' %}">Results</a>
+      </nav>
+    </header>
+    <main class="page-main">
       {% block content %}{% endblock %}
     </main>
   </div>

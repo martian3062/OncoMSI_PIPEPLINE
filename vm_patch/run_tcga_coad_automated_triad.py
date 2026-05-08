@@ -27,6 +27,7 @@ from sklearn.metrics import (
     roc_auc_score,
     roc_curve,
 )
+from sklearn.isotonic import IsotonicRegression
 from sklearn.model_selection import StratifiedKFold
 
 from hybrid_extractors import hybrid_backend_for_name, normalize_extractor_name, register_hybrid_extractors
@@ -178,6 +179,16 @@ def requested_qc_method(config: dict[str, Any]) -> str | None:
 
 def requested_n_repeats(config: dict[str, Any]) -> int:
     return max(1, int(config["request"].get("n_repeats", 1)))
+
+
+def requested_repeat_seeds(config: dict[str, Any]) -> list[int]:
+    value = config["request"].get("repeat_seeds")
+    raw_items = parse_candidate_list(value)
+    seeds = [int(item) for item in raw_items if str(item).strip()]
+    if not seeds:
+        base_seed = int(config["request"].get("seed", 310))
+        return [base_seed + index * 97 for index in range(requested_n_repeats(config))]
+    return seeds
 
 
 def requested_virchow_weights(config: dict[str, Any]) -> str | None:
@@ -377,6 +388,19 @@ def mil_output_dir(sf_root: Path, exp_label: str, repeat: int, fold: int) -> Pat
     return sf_root / "mil" / f"{exp_label}_repeat_{repeat}_fold_{fold}"
 
 
+def set_global_seed(seed: int) -> None:
+    random.seed(seed)
+    np.random.seed(seed)
+    try:
+        import torch
+
+        torch.manual_seed(seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(seed)
+    except Exception:
+        pass
+
+
 def run_command(command: list[str], *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(command, cwd=str(cwd) if cwd else None, text=True, capture_output=True, check=False)
 
@@ -446,6 +470,7 @@ def assign_patient_folds(
     n_folds: int = 5,
     seed: int = 310,
     n_repeats: int = 1,
+    repeat_seeds: list[int] | None = None,
 ) -> pd.DataFrame:
     labels = (
         df[["patient", OUTCOME]]
@@ -459,25 +484,32 @@ def assign_patient_folds(
 
     repeated_frames: list[pd.DataFrame] = []
     for repeat_idx in range(1, n_repeats + 1):
+        repeat_seed = (
+            int(repeat_seeds[repeat_idx - 1])
+            if repeat_seeds and len(repeat_seeds) >= repeat_idx
+            else seed + (repeat_idx - 1) * 97
+        )
         splitter = StratifiedKFold(
             n_splits=n_folds,
             shuffle=True,
-            random_state=seed + (repeat_idx - 1) * 97,
+            random_state=repeat_seed,
         )
         repeat_labels = labels.copy()
         repeat_labels["fold"] = 0
         repeat_labels["repeat"] = repeat_idx
+        repeat_labels["repeat_seed"] = repeat_seed
         for fold_idx, (_, val_idx) in enumerate(
             splitter.split(repeat_labels["patient"], repeat_labels[OUTCOME]),
             start=1,
         ):
             repeat_labels.loc[val_idx, "fold"] = fold_idx
-        repeated_frames.append(repeat_labels[["patient", "repeat", "fold"]])
+        repeated_frames.append(repeat_labels[["patient", "repeat", "fold", "repeat_seed"]])
 
     fold_plan = pd.concat(repeated_frames, ignore_index=True)
     out = df.merge(fold_plan, on="patient", how="inner")
     out["fold"] = out["fold"].astype(int)
     out["repeat"] = out["repeat"].astype(int)
+    out["repeat_seed"] = out["repeat_seed"].astype(int)
     return out
 
 
@@ -536,6 +568,7 @@ def materialize_subset(config: dict[str, Any]) -> dict[str, Any]:
     requested_limit = requested_slide_limit(config)
     requested_folds = requested_n_folds(config)
     max_negative_multiplier = requested_max_negative_multiplier(config)
+    repeat_seeds = requested_repeat_seeds(config)
     selected_rows = choose_balanced_subset(
         matched_rows,
         requested_limit,
@@ -551,7 +584,13 @@ def materialize_subset(config: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(f"Need at least 2 patients in each class after selection; got {patient_counts.to_dict()}.")
     n_folds = min(requested_folds, int(patient_counts.min()))
     n_repeats = requested_n_repeats(config)
-    split_plan_df = assign_patient_folds(subset_df, n_folds=n_folds, seed=310, n_repeats=n_repeats)
+    split_plan_df = assign_patient_folds(
+        subset_df,
+        n_folds=n_folds,
+        seed=310,
+        n_repeats=n_repeats,
+        repeat_seeds=repeat_seeds,
+    )
 
     annotations_dir = bundle_root / "annotations"
     slides_dir = bundle_root / "slideflow_project" / "data" / "slides"
@@ -571,6 +610,7 @@ def materialize_subset(config: dict[str, Any]) -> dict[str, Any]:
             "requested_n_folds": requested_folds,
             "n_folds": n_folds,
             "n_repeats": n_repeats,
+            "repeat_seeds": repeat_seeds,
             "matched_slides": len(matched_rows),
             "selected_slides": subset_df.to_dict("records"),
             "max_negative_multiplier": max_negative_multiplier,
@@ -588,6 +628,7 @@ def materialize_subset(config: dict[str, Any]) -> dict[str, Any]:
         "selected_slide_limit": int(len(subset_df)),
         "n_folds": n_folds,
         "n_repeats": n_repeats,
+        "repeat_seeds": repeat_seeds,
         "max_negative_multiplier": max_negative_multiplier,
     }
 
@@ -633,12 +674,12 @@ def import_slideflow():
     elif not os.environ.get("CONDA_PREFIX"):
         os.environ["CONDA_PREFIX"] = str(Path(sys.executable).resolve().parents[1])
     os.environ["SF_BACKEND"] = "torch"
-    os.environ["SF_SLIDE_BACKEND"] = "cucim"
+    os.environ["SF_SLIDE_BACKEND"] = "libvips"
     import slideflow as sf
     return sf
 
 
-def load_project(bundle_root: Path, annotations_csv: Path, slides_dir: Path):
+def load_project(bundle_root: Path, annotations_csv: Path, slides_dir: Path, *, source_name: str = "tcga_coad_subset"):
     sf = import_slideflow()
     register_hybrid_extractors(sf)
     sf_root = bundle_root / "slideflow_project"
@@ -651,12 +692,12 @@ def load_project(bundle_root: Path, annotations_csv: Path, slides_dir: Path):
             str(sf_root),
             name=f"TCGA_COAD_{bundle_root.name}",
             annotations=str(annotations_csv),
-            sources=["tcga_coad_subset"],
+            sources=[source_name],
             create=True,
         )
     if not dataset_config.exists():
         project.add_source(
-            "tcga_coad_subset",
+            source_name,
             slides=str(slides_dir),
             tfrecords=str(sf_root / "tfrecords"),
             tiles=str(sf_root / "tiles"),
@@ -696,6 +737,117 @@ def build_extractor(
             errors[name] = f"{type(exc).__name__}: {exc}"
             continue
     raise RuntimeError(f"Unable to initialize any requested feature extractor. Tried: {errors}")
+
+
+def _normalized_patient_value(row: dict[str, Any], patient_column: str | None) -> str:
+    if patient_column:
+        return str(row.get(patient_column) or "").strip().upper()
+    for candidate in ("patient", "patient_id", "sample_id", "case_id", "slide"):
+        if candidate in row and str(row.get(candidate) or "").strip():
+            return str(row.get(candidate)).strip().upper()
+    return ""
+
+
+def _cohort_slug(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", str(name).strip().lower()).strip("_") or "external"
+
+
+def _prepare_external_annotations_frame(annotations_df: pd.DataFrame) -> tuple[pd.DataFrame, str]:
+    frame = annotations_df.copy()
+    if "slide" not in frame.columns:
+        raise ValueError("External cohort annotations must include a 'slide' column.")
+    if OUTCOME not in frame.columns:
+        if "label" in frame.columns:
+            frame[OUTCOME] = frame["label"]
+        else:
+            raise ValueError(f"External cohort annotations must include '{OUTCOME}' or 'label'.")
+    patient_column = next(
+        (candidate for candidate in ("patient", "patient_id", "sample_id", "case_id") if candidate in frame.columns),
+        None,
+    )
+    if patient_column is None:
+        frame["patient"] = frame["slide"].astype(str)
+        patient_column = "patient"
+    elif patient_column != "patient":
+        frame["patient"] = frame[patient_column].astype(str)
+        patient_column = "patient"
+    frame["slide"] = frame["slide"].astype(str)
+    frame["patient"] = frame["patient"].astype(str)
+    frame = frame.loc[frame[OUTCOME].isin([POS_LABEL, NEG_LABEL])].copy()
+    if frame.empty:
+        raise ValueError("External cohort annotations have zero usable MSI-H/MSS rows after filtering.")
+    return frame, patient_column
+
+
+def materialize_external_cohort(config: dict[str, Any], cohort: dict[str, Any], bundle_root: Path) -> dict[str, Any]:
+    source_uri = str(cohort.get("source_uri") or "").strip()
+    annotations_csv = str(cohort.get("annotations_csv") or "").strip()
+    if not source_uri or not annotations_csv:
+        raise ValueError(f"External cohort is missing source_uri or annotations_csv: {cohort}")
+
+    cohort_name = str(cohort.get("name") or "External")
+    cohort_slug = _cohort_slug(cohort_name)
+    cohort_root = bundle_root / "external_cohorts" / cohort_slug
+    annotations_dir = cohort_root / "annotations"
+    slides_dir = cohort_root / "slideflow_project" / "data" / "slides"
+    annotations_dir.mkdir(parents=True, exist_ok=True)
+    slides_dir.mkdir(parents=True, exist_ok=True)
+
+    bucket_files = list_bucket_files(source_uri)
+    exact_map = {normalize_stem(row["name"]): row for row in bucket_files}
+    patient_candidates: dict[str, list[dict[str, str]]] = defaultdict(list)
+    for row in bucket_files:
+        patient_candidates[row["patient"]].append(row)
+
+    annotations_df = pd.read_csv(annotations_csv)
+    annotations_df, patient_column = _prepare_external_annotations_frame(annotations_df)
+
+    matched_rows: list[dict[str, Any]] = []
+    for row in annotations_df.to_dict("records"):
+        slide_stem = normalize_stem(str(row["slide"]))
+        match = exact_map.get(slide_stem)
+        if match is None:
+            patient = _normalized_patient_value(row, patient_column)
+            options = patient_candidates.get(patient, [])
+            if options:
+                match = sorted(options, key=lambda item: item["name"])[0]
+        if match is None:
+            continue
+        merged = dict(row)
+        merged["slide"] = match["name"].removesuffix(".svs")
+        merged["patient"] = _normalized_patient_value(row, patient_column) or match["patient"]
+        merged["bucket_uri"] = match["uri"]
+        merged["bucket_name"] = match["name"]
+        merged["bucket_suffix"] = match["suffix"]
+        matched_rows.append(merged)
+
+    if not matched_rows:
+        raise ValueError(f"No bucket slides matched the external annotation file for {cohort_name}.")
+
+    subset_df = pd.DataFrame(matched_rows)
+    subset_annotations = annotations_dir / f"{cohort_slug}_annotations.csv"
+    subset_df.to_csv(subset_annotations, index=False)
+    write_json(
+        annotations_dir / "selected_slides.json",
+        {
+            "cohort_name": cohort_name,
+            "source_uri": source_uri,
+            "matched_slides": len(matched_rows),
+            "selected_slides": subset_df.to_dict("records"),
+        },
+    )
+    return {
+        "name": cohort_name,
+        "slug": cohort_slug,
+        "source_uri": source_uri,
+        "annotations_csv": str(subset_annotations),
+        "slides_dir": str(slides_dir),
+        "selected_slide_names": subset_df["bucket_name"].tolist(),
+        "selected_slide_uris": subset_df["bucket_uri"].tolist(),
+        "label_counts": subset_df[OUTCOME].value_counts().to_dict(),
+        "selected_slide_count": int(len(subset_df)),
+        "cohort_root": str(cohort_root),
+    }
 
 
 def prepare_bundle_for_training(config: dict[str, Any]) -> dict[str, Any]:
@@ -806,6 +958,23 @@ def prepare_bundle_for_training(config: dict[str, Any]) -> dict[str, Any]:
         resolved_approach_extractors[approach_label] = resolved_extractor_name
         approach_backends[approach_label] = extractor_backend
 
+    prepared_external_cohorts: list[dict[str, Any]] = []
+    external_cohort_errors: list[dict[str, Any]] = []
+    for cohort in requested_external_cohorts(config):
+        try:
+            cohort_prepared = materialize_external_cohort(config, cohort, bundle_root)
+            download_subset_slides(config, cohort_prepared["selected_slide_uris"], Path(cohort_prepared["slides_dir"]))
+            prepared_external_cohorts.append(cohort_prepared)
+        except Exception as exc:
+            external_cohort_errors.append(
+                {
+                    "name": str(cohort.get("name") or "External"),
+                    "source_uri": str(cohort.get("source_uri") or ""),
+                    "annotations_csv": str(cohort.get("annotations_csv") or ""),
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+
     prepared = {
         **subset,
         "bags_dir": next(iter(bags_by_extractor.values())),
@@ -817,7 +986,14 @@ def prepare_bundle_for_training(config: dict[str, Any]) -> dict[str, Any]:
         "approach_execution_mode": execution_mode,
         "approaches": approach_payloads,
         "n_folds": int(subset["n_folds"]),
-        "external_cohorts": requested_external_cohorts(config),
+        "n_repeats": int(subset["n_repeats"]),
+        "repeat_seeds": subset.get("repeat_seeds", requested_repeat_seeds(config)),
+        # Downstream stages should only consume cohorts that were actually
+        # prepared successfully; the original request list is preserved via
+        # external_cohort_errors for reporting/debugging.
+        "external_cohorts": prepared_external_cohorts,
+        "external_cohorts_prepared": prepared_external_cohorts,
+        "external_cohort_errors": external_cohort_errors,
     }
     write_json(bundle_root / "prepared_bundle.json", prepared)
     return prepared
@@ -862,6 +1038,40 @@ def infer_score_column(df: pd.DataFrame) -> str:
     raise ValueError(f"Could not infer score column. Numeric columns: {numeric}")
 
 
+def infer_slide_column(df: pd.DataFrame) -> str:
+    for column in ["slide", "slide_id", "slide_name", "patient", "sample_id", "case_id"]:
+        if column in df.columns:
+            return column
+    raise ValueError(f"Could not infer slide identifier column. Columns: {list(df.columns)}")
+
+
+def parse_repeat_fold_from_path(path: Path) -> tuple[int | None, int | None]:
+    match = re.search(r"_repeat_(\d+)_fold_(\d+)", str(path))
+    if not match:
+        return None, None
+    return int(match.group(1)), int(match.group(2))
+
+
+def normalize_binary_labels(series: pd.Series) -> tuple[np.ndarray, list[str]]:
+    if pd.api.types.is_numeric_dtype(series):
+        values = series.fillna(0).astype(int).to_numpy()
+        labels = [POS_LABEL if int(value) == 1 else NEG_LABEL for value in values]
+        return values, labels
+
+    raw = series.astype(str).str.strip()
+    values = raw.str.upper().eq(POS_LABEL.upper()).astype(int).to_numpy()
+    labels = [POS_LABEL if int(value) == 1 else NEG_LABEL for value in values]
+    return values, labels
+
+
+def repeat_seed_for_repeat(repeat: int | None, repeat_seeds: list[int], default_seed: int) -> int:
+    if repeat is None or repeat <= 0:
+        return int(default_seed)
+    if len(repeat_seeds) >= repeat:
+        return int(repeat_seeds[repeat - 1])
+    return int(default_seed + (repeat - 1) * 97)
+
+
 def best_f1_threshold(y_true: np.ndarray, y_score: np.ndarray) -> tuple[float, float, float]:
     thresholds = np.unique(np.clip(np.round(y_score, 6), 0, 1))
     candidates = np.concatenate(([0.0], thresholds, [0.5, 1.0]))
@@ -894,32 +1104,223 @@ def bootstrap_mean_ci(values: list[float], *, seed: int = 310, rounds: int = 200
     return float(np.percentile(sampled_means, 2.5)), float(np.percentile(sampled_means, 97.5))
 
 
+def monte_carlo_metric_summary(
+    metrics_df: pd.DataFrame,
+    column: str,
+    *,
+    seed: int = 310,
+) -> dict[str, Any]:
+    if column not in metrics_df.columns:
+        return {}
+    values = [float(value) for value in metrics_df[column].dropna().tolist()]
+    if not values:
+        return {}
+
+    ci_low, ci_high = bootstrap_mean_ci(values, seed=seed, rounds=10000)
+    seed_rows: list[dict[str, Any]] = []
+    fold_variances: list[float] = []
+    if "repeat" in metrics_df.columns:
+        grouped = metrics_df.dropna(subset=[column]).groupby("repeat", sort=True)
+        for repeat, frame in grouped:
+            metric_values = frame[column].astype(float).to_numpy()
+            repeat_seed = None
+            if "repeat_seed" in frame.columns and not frame["repeat_seed"].dropna().empty:
+                repeat_seed = int(frame["repeat_seed"].dropna().iloc[0])
+            seed_rows.append(
+                {
+                    "repeat": int(repeat),
+                    "repeat_seed": repeat_seed,
+                    "mean": float(metric_values.mean()),
+                }
+            )
+            fold_variances.append(float(np.var(metric_values, ddof=0)))
+    seed_means = [row["mean"] for row in seed_rows]
+    seed_var = float(np.var(seed_means, ddof=0)) if seed_means else 0.0
+    fold_var = float(np.mean(fold_variances)) if fold_variances else 0.0
+    stability_ratio = float(seed_var / fold_var) if fold_var > 0 else None
+
+    return {
+        "count": int(len(values)),
+        "mean": float(np.mean(values)),
+        "std": float(np.std(values, ddof=0)),
+        "sem": float(np.std(values, ddof=0) / np.sqrt(len(values))),
+        "ci_95_lo": ci_low,
+        "ci_95_hi": ci_high,
+        "seed_mean": seed_rows,
+        "seed_var": seed_var,
+        "fold_var": fold_var,
+        "stability_ratio": stability_ratio,
+    }
+
+
+def build_monte_carlo_summary(metrics_df: pd.DataFrame, *, seed: int = 310) -> dict[str, Any]:
+    metric_map = {
+        "auroc": "AUROC",
+        "f1_macro": "F1",
+        "auprc": "AUPRC",
+        "balanced_accuracy": "Bal Acc",
+        "recall_msi_h": "MSI-H Recall",
+        "specificity": "Specificity",
+        "brier_score": "Brier",
+    }
+    summary = {
+        "measurement_count": int(len(metrics_df)),
+        "repeat_count": int(metrics_df["repeat"].nunique()) if "repeat" in metrics_df.columns else 1,
+        "fold_count": int(metrics_df["fold"].nunique()) if "fold" in metrics_df.columns else int(len(metrics_df)),
+        "metrics": {},
+    }
+    for column, label in metric_map.items():
+        metric_summary = monte_carlo_metric_summary(metrics_df, column, seed=seed)
+        if metric_summary:
+            summary["metrics"][label] = metric_summary
+    return summary
+
+
+def build_reliability_frame(
+    y_true: np.ndarray,
+    y_score: np.ndarray,
+    *,
+    bins: int = 10,
+) -> pd.DataFrame:
+    edges = np.linspace(0.0, 1.0, bins + 1)
+    rows: list[dict[str, Any]] = []
+    for idx in range(bins):
+        lower = float(edges[idx])
+        upper = float(edges[idx + 1])
+        if idx == bins - 1:
+            mask = (y_score >= lower) & (y_score <= upper)
+        else:
+            mask = (y_score >= lower) & (y_score < upper)
+        if not np.any(mask):
+            rows.append(
+                {
+                    "bin": idx + 1,
+                    "lower": lower,
+                    "upper": upper,
+                    "count": 0,
+                    "mean_predicted_prob": None,
+                    "observed_positive_rate": None,
+                }
+            )
+            continue
+        rows.append(
+            {
+                "bin": idx + 1,
+                "lower": lower,
+                "upper": upper,
+                "count": int(mask.sum()),
+                "mean_predicted_prob": float(y_score[mask].mean()),
+                "observed_positive_rate": float(y_true[mask].mean()),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def build_threshold_calibration_summary(
+    metrics_df: pd.DataFrame,
+    per_slide_df: pd.DataFrame,
+    *,
+    seed: int = 310,
+) -> tuple[dict[str, Any], pd.DataFrame, pd.DataFrame]:
+    threshold_values = [float(value) for value in metrics_df["best_threshold"].dropna().tolist()]
+    ci_low, ci_high = bootstrap_mean_ci(threshold_values, seed=seed, rounds=10000)
+    threshold_frame = metrics_df[
+        [col for col in ("repeat", "fold", "repeat_seed", "best_threshold") if col in metrics_df.columns]
+    ].copy()
+    if "best_threshold" in threshold_frame.columns:
+        threshold_frame = threshold_frame.rename(columns={"best_threshold": "threshold"})
+    threshold_histogram = np.histogram(threshold_values, bins=min(10, max(3, len(set(threshold_values))))) if threshold_values else None
+
+    y_true = per_slide_df["y_true"].astype(int).to_numpy()
+    y_score = per_slide_df["predicted_prob"].astype(float).to_numpy()
+    reliability_df = build_reliability_frame(y_true, y_score)
+
+    isotonic_rows: list[dict[str, Any]] = []
+    if "repeat_seed" in per_slide_df.columns:
+        for repeat_seed in sorted(int(value) for value in per_slide_df["repeat_seed"].dropna().unique().tolist()):
+            train_df = per_slide_df.loc[per_slide_df["repeat_seed"] != repeat_seed].copy()
+            test_df = per_slide_df.loc[per_slide_df["repeat_seed"] == repeat_seed].copy()
+            if train_df.empty or test_df.empty:
+                continue
+            if train_df["y_true"].nunique() < 2 or test_df["y_true"].nunique() < 2:
+                continue
+            iso = IsotonicRegression(out_of_bounds="clip")
+            iso.fit(train_df["predicted_prob"].astype(float), train_df["y_true"].astype(int))
+            calibrated = iso.transform(test_df["predicted_prob"].astype(float))
+            raw_brier = float(brier_score_loss(test_df["y_true"].astype(int), test_df["predicted_prob"].astype(float)))
+            calibrated_brier = float(brier_score_loss(test_df["y_true"].astype(int), calibrated))
+            isotonic_rows.append(
+                {
+                    "held_out_repeat_seed": repeat_seed,
+                    "raw_brier_score": raw_brier,
+                    "calibrated_brier_score": calibrated_brier,
+                    "brier_improvement": raw_brier - calibrated_brier,
+                    "raw_auroc": float(roc_auc_score(test_df["y_true"].astype(int), test_df["predicted_prob"].astype(float))),
+                    "calibrated_auroc": float(roc_auc_score(test_df["y_true"].astype(int), calibrated)),
+                }
+            )
+
+    summary = {
+        "threshold_count": int(len(threshold_values)),
+        "mean_threshold": float(np.mean(threshold_values)) if threshold_values else None,
+        "std_threshold": float(np.std(threshold_values, ddof=0)) if threshold_values else None,
+        "ci_95_lo": ci_low,
+        "ci_95_hi": ci_high,
+        "unstable_threshold_flag": bool(threshold_values and np.std(threshold_values, ddof=0) > 0.05),
+        "reliability_bins": int(len(reliability_df)),
+        "pooled_brier_score": float(brier_score_loss(y_true, y_score)) if len(y_true) else None,
+        "isotonic_recalibration": {
+            "evaluated": bool(isotonic_rows),
+            "per_seed": isotonic_rows,
+            "mean_brier_improvement": float(np.mean([row["brier_improvement"] for row in isotonic_rows]))
+            if isotonic_rows
+            else None,
+        },
+    }
+    if threshold_histogram is not None:
+        counts, edges = threshold_histogram
+        summary["threshold_histogram"] = [
+            {
+                "lower": float(edges[idx]),
+                "upper": float(edges[idx + 1]),
+                "count": int(counts[idx]),
+            }
+            for idx in range(len(counts))
+        ]
+    return summary, threshold_frame, reliability_df
+
+
 def read_table(path: Path) -> pd.DataFrame:
     if path.suffix == ".parquet":
         return pd.read_parquet(path)
     return pd.read_csv(path)
 
 
-def aggregate_approach(bundle_root: Path, spec: dict[str, Any], exp_label: str) -> dict[str, Any]:
-    sf_root = bundle_root / "slideflow_project"
-    prediction_files = sorted(
-        p
-        for p in list((sf_root / "mil").rglob("predictions.parquet"))
-        + list((sf_root / "mil").rglob("predictions.csv"))
-        if exp_label in str(p.parent)
-    )
+def aggregate_prediction_files(
+    prediction_files: list[Path],
+    *,
+    approach_label: str,
+    mil_model: str,
+    epochs: int,
+    seed: int,
+    repeat_seeds: list[int],
+    artifact_label: str,
+) -> dict[str, Any]:
     if not prediction_files:
-        raise FileNotFoundError(f"No prediction files found for {exp_label}")
-
+        raise FileNotFoundError(f"No prediction files found for {artifact_label}")
     rows: list[dict[str, Any]] = []
     curves: list[pd.DataFrame] = []
+    per_slide_frames: list[pd.DataFrame] = []
     for path in prediction_files:
         df = read_table(path)
         score_col = infer_score_column(df)
+        slide_col = infer_slide_column(df)
+        repeat, fold = parse_repeat_fold_from_path(path)
+        repeat_seed = repeat_seed_for_repeat(repeat, repeat_seeds, seed)
         if OUTCOME in df.columns:
-            y_true = (df[OUTCOME] == POS_LABEL).astype(int).to_numpy()
+            y_true, label_names = normalize_binary_labels(df[OUTCOME])
         elif "y_true" in df.columns and pd.api.types.is_numeric_dtype(df["y_true"]):
-            y_true = df["y_true"].astype(int).to_numpy()
+            y_true, label_names = normalize_binary_labels(df["y_true"])
         else:
             continue
         if len(np.unique(y_true)) < 2:
@@ -939,6 +1340,9 @@ def aggregate_approach(bundle_root: Path, spec: dict[str, Any], exp_label: str) 
                 "file": str(path),
                 "score_column": score_col,
                 "n": int(len(df)),
+                "repeat": repeat,
+                "fold": fold,
+                "repeat_seed": repeat_seed,
                 "auroc": fold_auc,
                 "auprc": fold_auprc,
                 "f1_macro": tuned_f1,
@@ -958,27 +1362,59 @@ def aggregate_approach(bundle_root: Path, spec: dict[str, Any], exp_label: str) 
             }
         )
         fpr, tpr, _ = roc_curve(y_true, y_score)
-        curves.append(pd.DataFrame({"fpr": fpr, "tpr": tpr, "file": str(path)}))
+        curves.append(
+            pd.DataFrame(
+                {
+                    "fpr": fpr,
+                    "tpr": tpr,
+                    "file": str(path),
+                    "repeat": repeat,
+                    "fold": fold,
+                    "repeat_seed": repeat_seed,
+                }
+            )
+        )
+        per_slide = pd.DataFrame(
+            {
+                "slide_id": df[slide_col].astype(str),
+                "true_label": label_names,
+                "y_true": y_true.astype(int),
+                "predicted_prob": y_score.astype(float),
+                "repeat": repeat,
+                "fold": fold,
+                "repeat_seed": repeat_seed,
+                "approach_label": approach_label,
+                "mil_model": mil_model,
+                "score_column": score_col,
+                "prediction_file": str(path),
+            }
+        )
+        per_slide_frames.append(per_slide)
 
     if not rows:
-        raise FileNotFoundError(f"No usable prediction rows found for {exp_label}")
+        raise FileNotFoundError(f"No usable prediction rows found for {artifact_label}")
 
     metrics_df = pd.DataFrame(rows)
+    per_slide_df = pd.concat(per_slide_frames, ignore_index=True)
     auroc_values = [float(value) for value in metrics_df["auroc"].tolist()]
-    auroc_ci_low, auroc_ci_high = bootstrap_mean_ci(auroc_values, seed=int(spec.get("seed", 310)))
+    auroc_ci_low, auroc_ci_high = bootstrap_mean_ci(auroc_values, seed=seed)
     aggregate_confusion = {
         "tp": int(metrics_df["tp"].sum()),
         "fp": int(metrics_df["fp"].sum()),
         "tn": int(metrics_df["tn"].sum()),
         "fn": int(metrics_df["fn"].sum()),
     }
-    metrics = {
-        "experiment_id": str(spec["experiment_id"]),
-        "approach_label": str(spec["approach_label"]),
-        "mil_model": str(spec["mil_model"]),
-        "mil_model_requested": parse_candidate_list(spec.get("mil_model_candidates")) or [str(spec["mil_model"])],
-        "epochs": int(spec["epochs"]),
-        "seed": int(spec["seed"]),
+    monte_carlo_summary = build_monte_carlo_summary(metrics_df, seed=seed)
+    threshold_calibration_summary, threshold_frame, reliability_df = build_threshold_calibration_summary(
+        metrics_df,
+        per_slide_df,
+        seed=seed,
+    )
+    return {
+        "approach_label": approach_label,
+        "mil_model": mil_model,
+        "epochs": epochs,
+        "seed": seed,
         "mean_auroc": float(metrics_df["auroc"].mean()),
         "mean_f1_macro": float(metrics_df["f1_macro"].mean()),
         "mean_f1_macro_default_threshold": float(metrics_df["f1_macro_default_threshold"].mean()),
@@ -996,19 +1432,123 @@ def aggregate_approach(bundle_root: Path, spec: dict[str, Any], exp_label: str) 
         "fold_metrics": metrics_df.to_dict("records"),
         "aggregate_confusion_matrix": aggregate_confusion,
         "folds": int(len(metrics_df)),
-        "external_metrics": {},
         "artifacts": {
             "prediction_files": [str(p) for p in prediction_files],
         },
+        "_metrics_df": metrics_df,
+        "_per_slide_df": per_slide_df,
+        "_monte_carlo_summary": monte_carlo_summary,
+        "_threshold_calibration_summary": threshold_calibration_summary,
+        "_threshold_frame": threshold_frame,
+        "_reliability_df": reliability_df,
+        "_curves": curves,
     }
 
+
+def aggregate_approach(
+    bundle_root: Path,
+    spec: dict[str, Any],
+    exp_label: str,
+    *,
+    repeat_seeds: list[int],
+) -> dict[str, Any]:
+    sf_root = bundle_root / "slideflow_project"
+    prediction_files = sorted(
+        p
+        for p in list((sf_root / "mil").rglob("predictions.parquet"))
+        + list((sf_root / "mil").rglob("predictions.csv"))
+        if exp_label in str(p.parent)
+    )
+    metrics = aggregate_prediction_files(
+        prediction_files,
+        approach_label=str(spec["approach_label"]),
+        mil_model=str(spec["mil_model"]),
+        epochs=int(spec["epochs"]),
+        seed=int(spec.get("seed", 310)),
+        repeat_seeds=repeat_seeds,
+        artifact_label=exp_label,
+    )
+    metrics.update(
+        {
+            "experiment_id": str(spec["experiment_id"]),
+            "mil_model_requested": parse_candidate_list(spec.get("mil_model_candidates")) or [str(spec["mil_model"])],
+            "external_metrics": {},
+        }
+    )
     approach_dir = bundle_root / "approaches" / str(spec["approach_label"])
     approach_dir.mkdir(parents=True, exist_ok=True)
-    metrics_df.to_csv(approach_dir / "fold_metrics.csv", index=False)
+    fold_metrics_path = approach_dir / "fold_metrics.csv"
+    per_slide_path = approach_dir / "per_slide_predictions.csv"
+    monte_carlo_path = approach_dir / "monte_carlo_summary.json"
+    calibration_path = approach_dir / "threshold_calibration_summary.json"
+    threshold_path = approach_dir / "threshold_distribution.csv"
+    reliability_path = approach_dir / "reliability_diagram.csv"
+    roc_path = approach_dir / "roc_curves.csv"
+    metrics.pop("_metrics_df").to_csv(fold_metrics_path, index=False)
+    metrics.pop("_per_slide_df").to_csv(per_slide_path, index=False)
+    write_json(monte_carlo_path, metrics.pop("_monte_carlo_summary"))
+    write_json(calibration_path, metrics.pop("_threshold_calibration_summary"))
+    metrics.pop("_threshold_frame").to_csv(threshold_path, index=False)
+    metrics.pop("_reliability_df").to_csv(reliability_path, index=False)
+    curves = metrics.pop("_curves")
     if curves:
-        pd.concat(curves).to_csv(approach_dir / "roc_curves.csv", index=False)
+        pd.concat(curves).to_csv(roc_path, index=False)
+    metrics["artifacts"].update(
+        {
+            "fold_metrics_csv": str(fold_metrics_path),
+            "per_slide_predictions_csv": str(per_slide_path),
+            "monte_carlo_summary_json": str(monte_carlo_path),
+            "threshold_calibration_summary_json": str(calibration_path),
+            "threshold_distribution_csv": str(threshold_path),
+            "reliability_diagram_csv": str(reliability_path),
+            "roc_curves_csv": str(roc_path),
+        }
+    )
     write_json(approach_dir / "metrics.json", metrics)
     return metrics
+
+
+def write_bundle_level_top4_summary(bundle_root: Path, approach_payloads: dict[str, Any]) -> None:
+    rows: list[dict[str, Any]] = []
+    for approach_label, payload in sorted(approach_payloads.items()):
+        monte = payload.get("artifacts", {}).get("monte_carlo_summary_json")
+        monte_payload = read_json(Path(monte)) if monte and Path(monte).exists() else {}
+        auroc_summary = monte_payload.get("metrics", {}).get("AUROC", {})
+        rows.append(
+            {
+                "approach_label": approach_label,
+                "mil_model": payload.get("mil_model"),
+                "feature_extractor_used": payload.get("feature_extractor_used"),
+                "mean_auroc": payload.get("mean_auroc"),
+                "mean_auprc": payload.get("mean_auprc"),
+                "mean_balanced_accuracy": payload.get("mean_balanced_accuracy"),
+                "mean_recall_msi_h": payload.get("mean_recall_msi_h"),
+                "mean_specificity": payload.get("mean_specificity"),
+                "mean_brier_score": payload.get("mean_brier_score"),
+                "mean_best_threshold": payload.get("mean_best_threshold"),
+                "auroc_ci_95_lo": auroc_summary.get("ci_95_lo"),
+                "auroc_ci_95_hi": auroc_summary.get("ci_95_hi"),
+                "auroc_seed_var": auroc_summary.get("seed_var"),
+                "auroc_fold_var": auroc_summary.get("fold_var"),
+                "auroc_stability_ratio": auroc_summary.get("stability_ratio"),
+            }
+        )
+    rows = sorted(
+        rows,
+        key=lambda row: (
+            float(row.get("mean_auroc") or 0.0),
+            -float(row.get("auroc_stability_ratio") or 0.0),
+            float(row.get("mean_auprc") or 0.0),
+        ),
+        reverse=True,
+    )
+    payload = {
+        "bundle_id": bundle_root.name,
+        "approach_count": len(rows),
+        "ranking_order": [row["approach_label"] for row in rows],
+        "approaches": rows,
+    }
+    write_json(bundle_root / "top4_montecarlo_aggregate.json", payload)
 
 
 def build_transmil_ensemble_summary(
@@ -1248,7 +1788,12 @@ def train_one_approach(config: dict[str, Any], approach_label: str) -> None:
                         attention_heatmaps=False,
                     )
 
-            metrics = aggregate_approach(bundle_root, spec, exp_label)
+            metrics = aggregate_approach(
+                bundle_root,
+                spec,
+                exp_label,
+                repeat_seeds=prepared.get("repeat_seeds", []),
+            )
             metrics["mil_model_candidates"] = mil_candidates
             metrics["mil_model_config_errors"] = config_errors
             metrics["n_folds"] = n_folds
@@ -1379,7 +1924,11 @@ def finalize_bundle(config: dict[str, Any], prepared: dict[str, Any], approach_p
         "feature_extractor_candidates": prepared.get("feature_extractor_candidates", []),
         "feature_extractors_by_approach": prepared.get("feature_extractors_by_approach", {}),
         "resolved_feature_extractors_by_approach": prepared.get("resolved_feature_extractors_by_approach", {}),
-        "external_cohorts": prepared.get("external_cohorts", requested_external_cohorts(config)),
+        "external_cohorts": prepared.get(
+            "external_cohorts_prepared",
+            prepared.get("external_cohorts", requested_external_cohorts(config)),
+        ),
+        "external_cohort_errors": prepared.get("external_cohort_errors", []),
         "approaches": summary_view["approaches"],
         "state": summary_view["overall_state"],
         "best_approach": summary_view["best_approach"],
@@ -1390,6 +1939,7 @@ def finalize_bundle(config: dict[str, Any], prepared: dict[str, Any], approach_p
     ensemble_metrics = build_transmil_ensemble_summary(bundle_root, prepared, final_summary)
     if ensemble_metrics:
         final_summary["approaches"]["Ensemble_A1_MC"] = ensemble_metrics
+    write_bundle_level_top4_summary(bundle_root, summary_view["approaches"])
     write_json(bundle_root / "final_summary.json", final_summary)
     status_extra = {
         "selected_slide_count": len(prepared["selected_slide_names"]),

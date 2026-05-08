@@ -1,6 +1,8 @@
 import json
+import re
 import shlex
 from datetime import timedelta
+from pathlib import Path
 
 from django.conf import settings
 from django.db.models import Q
@@ -8,6 +10,7 @@ from django.http import HttpRequest, HttpResponse
 from django.shortcuts import redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_GET, require_POST
+import plotly.graph_objects as go
 
 from apps.approaches.registry import build_approach_slots
 from apps.archives.models import BatchArchive
@@ -15,6 +18,7 @@ from apps.runs.models import Run
 from apps.runs.services import create_run_from_payload, dashboard_summary
 from apps.runs.vm_runtime import sync_run_status
 from apps.vm.services import default_vm_target, run_shell
+from .results_beta import build_results_beta_context
 from .services import integration_summary
 
 
@@ -58,6 +62,15 @@ LIVE_STATES = {
     "spawned",
     "pending",
 }
+
+METRIC_FIELDS = [
+    ("AUROC", "mean_auroc"),
+    ("F1 Macro", "mean_f1_macro"),
+    ("AUPRC", "mean_auprc"),
+    ("Bal Acc", "mean_balanced_accuracy"),
+    ("MSI-H Recall", "mean_recall_msi_h"),
+    ("Specificity", "mean_specificity"),
+]
 
 
 def _clock_delta_seconds(start: str, end: str) -> int | None:
@@ -137,6 +150,451 @@ def metric_display(value, digits: int = 3) -> str:
         return f"{float(value):.{digits}f}"
     except (TypeError, ValueError):
         return "-"
+
+
+def _safe_float(value):
+    try:
+        if value in (None, "", "NA"):
+            return None
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _duration_to_seconds(value: str) -> int | None:
+    text = (value or "").strip()
+    if not text or ":" not in text:
+        return None
+    try:
+        minutes, seconds = [int(part) for part in text.split(":", 1)]
+    except ValueError:
+        return None
+    return minutes * 60 + seconds
+
+
+def _slugish(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", str(value).lower()).strip("-")
+
+
+def _find_local_approach_dir(run: Run, link) -> Path | None:
+    bundle_roots = [
+        Path(settings.BASE_DIR) / "ten" / run.run_id / "approaches",
+        Path(settings.BASE_DIR) / "iresuts-history" / "hybrid-03" / "approaches",
+    ]
+    label_no_space = link.approach_template.label.replace(" ", "")
+    key_slug = _slugish(link.approach_template.label)
+    for root in bundle_roots:
+        if not root.exists():
+            continue
+        direct = root / label_no_space
+        if direct.exists():
+            return direct
+        for candidate in root.rglob("metrics.json"):
+            parent = candidate.parent
+            normalized_parent = _slugish(str(parent.relative_to(root)))
+            if label_no_space in str(parent) or key_slug in normalized_parent:
+                return parent
+    return None
+
+
+def _build_run_metric_map(links) -> str:
+    chart_links = [link for link in links if any(getattr(link, field, None) is not None for _, field in METRIC_FIELDS)]
+    if not chart_links:
+        return ""
+    z = []
+    labels = []
+    for link in chart_links:
+        labels.append(link.approach_template.label)
+        z.append([_safe_float(getattr(link, field, None)) for _, field in METRIC_FIELDS])
+    fig = go.Figure(
+        data=[
+            go.Heatmap(
+                z=z,
+                x=[label for label, _ in METRIC_FIELDS],
+                y=labels,
+                colorscale="Viridis",
+                zmin=0.0,
+                zmax=1.0,
+                text=[[metric_display(value) for value in row] for row in z],
+                texttemplate="%{text}",
+                hovertemplate="Approach=%{y}<br>Metric=%{x}<br>Value=%{z:.3f}<extra></extra>",
+            )
+        ]
+    )
+    fig.update_layout(
+        margin={"l": 12, "r": 12, "t": 20, "b": 24},
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"color": "#eef5ff", "size": 11},
+        height=max(260, 54 * len(labels)),
+    )
+    return fig.to_json()
+
+
+def _build_run_metric_map_3d(links) -> str:
+    chart_links = [link for link in links if any(getattr(link, field, None) is not None for _, field in METRIC_FIELDS)]
+    if not chart_links:
+        return ""
+    z = []
+    labels = []
+    for link in chart_links:
+        labels.append(link.approach_template.label)
+        z.append([_safe_float(getattr(link, field, None)) for _, field in METRIC_FIELDS])
+    fig = go.Figure(
+        data=[
+            go.Surface(
+                z=z,
+                x=list(range(len(METRIC_FIELDS))),
+                y=list(range(len(labels))),
+                colorscale="Viridis",
+                cmin=0.0,
+                cmax=1.0,
+                customdata=[[metric_display(value) for value in row] for row in z],
+                hovertemplate="Approach=%{y}<br>Metric=%{x}<br>Value=%{customdata}<extra></extra>",
+            )
+        ]
+    )
+    fig.update_layout(
+        margin={"l": 12, "r": 12, "t": 20, "b": 24},
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"color": "#eef5ff", "size": 11},
+        height=max(320, 70 * len(labels)),
+        scene={
+            "xaxis": {"title": "Metric", "tickvals": list(range(len(METRIC_FIELDS))), "ticktext": [label for label, _ in METRIC_FIELDS]},
+            "yaxis": {"title": "Approach", "tickvals": list(range(len(labels))), "ticktext": labels},
+            "zaxis": {"title": "Score", "range": [0.0, 1.0]},
+            "camera": {"eye": {"x": 1.6, "y": 1.4, "z": 0.8}},
+        },
+    )
+    return fig.to_json()
+
+
+def _build_tradeoff_map(links) -> str:
+    rows = []
+    for link in links:
+        recall = _safe_float(getattr(link, "mean_recall_msi_h", None))
+        specificity = _safe_float(getattr(link, "mean_specificity", None))
+        auroc = _safe_float(getattr(link, "mean_auroc", None))
+        auprc = _safe_float(getattr(link, "mean_auprc", None))
+        if recall is None or specificity is None or auroc is None:
+            continue
+        rows.append((link.approach_template.label, recall, specificity, auroc, auprc or 0.0))
+    if not rows:
+        return ""
+    fig = go.Figure(
+        data=[
+            go.Scatter(
+                x=[item[2] for item in rows],
+                y=[item[1] for item in rows],
+                mode="markers+text",
+                text=[item[0] for item in rows],
+                textposition="top center",
+                marker={
+                    "size": [20 + item[3] * 18 for item in rows],
+                    "color": [item[4] for item in rows],
+                    "colorscale": "Turbo",
+                    "showscale": True,
+                    "colorbar": {"title": "AUPRC"},
+                    "line": {"color": "rgba(255,255,255,0.55)", "width": 1},
+                },
+                hovertemplate="Approach=%{text}<br>Specificity=%{x:.3f}<br>Recall=%{y:.3f}<extra></extra>",
+            )
+        ]
+    )
+    fig.update_layout(
+        margin={"l": 24, "r": 12, "t": 20, "b": 32},
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"color": "#eef5ff", "size": 11},
+        height=320,
+        xaxis={"title": "Specificity", "range": [0.7, 1.0], "gridcolor": "rgba(255,255,255,0.08)"},
+        yaxis={"title": "MSI-H Recall", "range": [0.7, 1.0], "gridcolor": "rgba(255,255,255,0.08)"},
+    )
+    return fig.to_json()
+
+
+def _build_tradeoff_map_3d(links) -> str:
+    rows = []
+    for link in links:
+        recall = _safe_float(getattr(link, "mean_recall_msi_h", None))
+        specificity = _safe_float(getattr(link, "mean_specificity", None))
+        auroc = _safe_float(getattr(link, "mean_auroc", None))
+        auprc = _safe_float(getattr(link, "mean_auprc", None))
+        if recall is None or specificity is None or auroc is None:
+            continue
+        rows.append((link.approach_template.label, recall, specificity, auroc, auprc or 0.0))
+    if not rows:
+        return ""
+    fig = go.Figure(
+        data=[
+            go.Scatter3d(
+                x=[item[2] for item in rows],
+                y=[item[1] for item in rows],
+                z=[item[3] for item in rows],
+                mode="markers+text",
+                text=[item[0] for item in rows],
+                textposition="top center",
+                marker={
+                    "size": [8 + item[4] * 18 for item in rows],
+                    "color": [item[4] for item in rows],
+                    "colorscale": "Turbo",
+                    "showscale": True,
+                    "colorbar": {"title": "AUPRC"},
+                    "line": {"color": "rgba(255,255,255,0.55)", "width": 1},
+                    "opacity": 0.9,
+                },
+                hovertemplate="Approach=%{text}<br>Specificity=%{x:.3f}<br>Recall=%{y:.3f}<br>AUROC=%{z:.3f}<extra></extra>",
+            )
+        ]
+    )
+    fig.update_layout(
+        margin={"l": 24, "r": 12, "t": 20, "b": 32},
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"color": "#eef5ff", "size": 11},
+        height=320,
+        scene={
+            "xaxis": {"title": "Specificity", "range": [0.7, 1.0]},
+            "yaxis": {"title": "MSI-H Recall", "range": [0.7, 1.0]},
+            "zaxis": {"title": "AUROC", "range": [0.7, 1.0]},
+            "camera": {"eye": {"x": 1.5, "y": 1.3, "z": 0.95}},
+        },
+    )
+    return fig.to_json()
+
+
+def _build_fold_metric_chart(link) -> str:
+    rows = getattr(link, "fold_metrics", None) or []
+    if not rows:
+        return ""
+    folds = list(range(1, len(rows) + 1))
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=folds, y=[_safe_float(row.get("auroc")) for row in rows], mode="lines+markers", name="AUROC"))
+    fig.add_trace(go.Scatter(x=folds, y=[_safe_float(row.get("f1_macro")) for row in rows], mode="lines+markers", name="F1"))
+    fig.add_trace(go.Scatter(x=folds, y=[_safe_float(row.get("balanced_accuracy")) for row in rows], mode="lines+markers", name="Bal Acc"))
+    fig.add_trace(go.Scatter(x=folds, y=[_safe_float(row.get("recall_msi_h")) for row in rows], mode="lines+markers", name="Recall"))
+    fig.update_layout(
+        margin={"l": 28, "r": 12, "t": 20, "b": 28},
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"color": "#eef5ff", "size": 11},
+        height=280,
+        xaxis={"title": "Fold", "dtick": 1, "gridcolor": "rgba(255,255,255,0.08)"},
+        yaxis={"title": "Score", "range": [0.0, 1.0], "gridcolor": "rgba(255,255,255,0.08)"},
+        legend={"orientation": "h"},
+    )
+    return fig.to_json()
+
+
+def _build_fold_metric_chart_3d(link) -> str:
+    rows = getattr(link, "fold_metrics", None) or []
+    if not rows:
+        return ""
+    folds = list(range(1, len(rows) + 1))
+    series = [
+        ("AUROC", "auroc"),
+        ("F1", "f1_macro"),
+        ("Bal Acc", "balanced_accuracy"),
+        ("Recall", "recall_msi_h"),
+    ]
+    z = [[_safe_float(row.get(field)) for row in rows] for _, field in series]
+    fig = go.Figure(
+        data=[
+            go.Surface(
+                z=z,
+                x=folds,
+                y=list(range(len(series))),
+                colorscale="Plasma",
+                cmin=0.0,
+                cmax=1.0,
+                hovertemplate="Fold=%{x}<br>Metric=%{y}<br>Score=%{z:.3f}<extra></extra>",
+            )
+        ]
+    )
+    fig.update_layout(
+        margin={"l": 28, "r": 12, "t": 20, "b": 28},
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"color": "#eef5ff", "size": 11},
+        height=280,
+        scene={
+            "xaxis": {"title": "Fold", "tickvals": folds},
+            "yaxis": {"title": "Metric", "tickvals": list(range(len(series))), "ticktext": [label for label, _ in series]},
+            "zaxis": {"title": "Score", "range": [0.0, 1.0]},
+            "camera": {"eye": {"x": 1.4, "y": 1.2, "z": 0.85}},
+        },
+    )
+    return fig.to_json()
+
+
+def _build_epoch_chart(run: Run, link) -> tuple[str, str]:
+    approach_dir = _find_local_approach_dir(run, link)
+    if not approach_dir:
+        return "", ""
+    runner_log = approach_dir / "runner.log"
+    if not runner_log.exists():
+        return "", ""
+    pattern = re.compile(
+        r"^\s*(\d+)\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s+(\d{2}:\d{2})\s*$"
+    )
+    epochs = []
+    cumulative_seconds = 0
+    for line in runner_log.read_text(encoding="utf-8", errors="ignore").splitlines():
+        match = pattern.match(line.strip())
+        if not match:
+            continue
+        epoch_idx = int(match.group(1)) + 1
+        train_loss = _safe_float(match.group(2))
+        valid_loss = _safe_float(match.group(3))
+        auroc = _safe_float(match.group(4))
+        epoch_seconds = _duration_to_seconds(match.group(5)) or 0
+        cumulative_seconds += epoch_seconds
+        epochs.append(
+            {
+                "epoch": epoch_idx,
+                "train_loss": train_loss,
+                "valid_loss": valid_loss,
+                "auroc": auroc,
+                "epoch_seconds": epoch_seconds,
+                "elapsed_minutes": cumulative_seconds / 60.0,
+            }
+        )
+    if not epochs:
+        return "", ""
+
+    epoch_numbers = [row["epoch"] for row in epochs]
+    fig_epoch = go.Figure()
+    fig_epoch.add_trace(go.Scatter(x=epoch_numbers, y=[row["train_loss"] for row in epochs], mode="lines+markers", name="Train loss"))
+    fig_epoch.add_trace(go.Scatter(x=epoch_numbers, y=[row["valid_loss"] for row in epochs], mode="lines+markers", name="Valid loss"))
+    fig_epoch.add_trace(go.Scatter(x=epoch_numbers, y=[row["auroc"] for row in epochs], mode="lines+markers", name="Val AUROC", yaxis="y2"))
+    fig_epoch.update_layout(
+        margin={"l": 32, "r": 32, "t": 20, "b": 28},
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"color": "#eef5ff", "size": 11},
+        xaxis={"title": "Epoch", "dtick": 1, "gridcolor": "rgba(255,255,255,0.08)"},
+        yaxis={"title": "Loss", "gridcolor": "rgba(255,255,255,0.08)"},
+        yaxis2={"title": "AUROC", "overlaying": "y", "side": "right", "range": [0.0, 1.0]},
+        legend={"orientation": "h"},
+        height=300,
+    )
+
+    fig_time = go.Figure()
+    fig_time.add_trace(go.Bar(x=epoch_numbers, y=[row["epoch_seconds"] for row in epochs], name="Epoch seconds"))
+    fig_time.add_trace(go.Scatter(x=epoch_numbers, y=[row["elapsed_minutes"] for row in epochs], mode="lines+markers", name="Cumulative minutes", yaxis="y2"))
+    fig_time.update_layout(
+        margin={"l": 32, "r": 32, "t": 20, "b": 28},
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"color": "#eef5ff", "size": 11},
+        xaxis={"title": "Epoch", "dtick": 1, "gridcolor": "rgba(255,255,255,0.08)"},
+        yaxis={"title": "Seconds", "gridcolor": "rgba(255,255,255,0.08)"},
+        yaxis2={"title": "Elapsed minutes", "overlaying": "y", "side": "right"},
+        legend={"orientation": "h"},
+        height=260,
+    )
+    return fig_epoch.to_json(), fig_time.to_json()
+
+
+def _build_epoch_chart_3d(run: Run, link) -> tuple[str, str]:
+    approach_dir = _find_local_approach_dir(run, link)
+    if not approach_dir:
+        return "", ""
+    runner_log = approach_dir / "runner.log"
+    if not runner_log.exists():
+        return "", ""
+    pattern = re.compile(
+        r"^\s*(\d+)\s+([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s+(\d{2}:\d{2})\s*$"
+    )
+    epochs = []
+    cumulative_seconds = 0
+    for line in runner_log.read_text(encoding="utf-8", errors="ignore").splitlines():
+        match = pattern.match(line.strip())
+        if not match:
+            continue
+        epoch_idx = int(match.group(1)) + 1
+        train_loss = _safe_float(match.group(2))
+        valid_loss = _safe_float(match.group(3))
+        auroc = _safe_float(match.group(4))
+        epoch_seconds = _duration_to_seconds(match.group(5)) or 0
+        cumulative_seconds += epoch_seconds
+        epochs.append(
+            {
+                "epoch": epoch_idx,
+                "train_loss": train_loss,
+                "valid_loss": valid_loss,
+                "auroc": auroc,
+                "epoch_seconds": epoch_seconds,
+                "elapsed_minutes": cumulative_seconds / 60.0,
+            }
+        )
+    if not epochs:
+        return "", ""
+
+    epoch_numbers = [row["epoch"] for row in epochs]
+    fig_epoch = go.Figure()
+    metric_lanes = [("Train loss", 0, "train_loss"), ("Valid loss", 1, "valid_loss"), ("Val AUROC", 2, "auroc")]
+    for label, lane, field in metric_lanes:
+        fig_epoch.add_trace(
+            go.Scatter3d(
+                x=epoch_numbers,
+                y=[lane] * len(epochs),
+                z=[row[field] for row in epochs],
+                mode="lines+markers",
+                name=label,
+                hovertemplate=f"{label}<br>Epoch=%{{x}}<br>Value=%{{z:.3f}}<extra></extra>",
+            )
+        )
+    fig_epoch.update_layout(
+        margin={"l": 32, "r": 32, "t": 20, "b": 28},
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"color": "#eef5ff", "size": 11},
+        height=300,
+        scene={
+            "xaxis": {"title": "Epoch", "tickvals": epoch_numbers},
+            "yaxis": {"title": "Metric", "tickvals": [0, 1, 2], "ticktext": [item[0] for item in metric_lanes]},
+            "zaxis": {"title": "Value"},
+            "camera": {"eye": {"x": 1.35, "y": 1.15, "z": 0.9}},
+        },
+    )
+
+    fig_time = go.Figure()
+    fig_time.add_trace(
+        go.Scatter3d(
+            x=epoch_numbers,
+            y=[row["elapsed_minutes"] for row in epochs],
+            z=[row["epoch_seconds"] for row in epochs],
+            mode="lines+markers",
+            name="Epoch time",
+            hovertemplate="Epoch=%{x}<br>Elapsed min=%{y:.2f}<br>Epoch sec=%{z:.0f}<extra></extra>",
+        )
+    )
+    fig_time.add_trace(
+        go.Scatter3d(
+            x=epoch_numbers,
+            y=[row["elapsed_minutes"] for row in epochs],
+            z=[row["auroc"] for row in epochs],
+            mode="lines+markers",
+            name="AUROC vs time",
+            hovertemplate="Epoch=%{x}<br>Elapsed min=%{y:.2f}<br>AUROC=%{z:.3f}<extra></extra>",
+        )
+    )
+    fig_time.update_layout(
+        margin={"l": 32, "r": 32, "t": 20, "b": 28},
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        font={"color": "#eef5ff", "size": 11},
+        height=260,
+        scene={
+            "xaxis": {"title": "Epoch", "tickvals": epoch_numbers},
+            "yaxis": {"title": "Elapsed minutes"},
+            "zaxis": {"title": "Epoch seconds / AUROC"},
+            "camera": {"eye": {"x": 1.35, "y": 1.25, "z": 0.85}},
+        },
+    )
+    return fig_epoch.to_json(), fig_time.to_json()
 
 
 def infer_run_progress(run: Run) -> tuple[int, str]:
@@ -370,10 +828,18 @@ def hydrate_run(run: Run, *, allow_sync_failure: bool, sync_remote: bool) -> Run
         link.available_bag_slide_count_display = getattr(link, "available_bag_slide_count", None) or "-"
         link.missing_bag_slide_count = len(getattr(link, "missing_bag_slides", []) or [])
         link.chart_score_pct = max(2, min(100, int(round((link.mean_auroc or 0.0) * 100)))) if link.mean_auroc is not None else 6
+        link.fold_chart_json = _build_fold_metric_chart(link)
+        link.fold_chart_3d_json = _build_fold_metric_chart_3d(link)
+        link.epoch_chart_json = ""
+        link.epoch_chart_3d_json = ""
+        link.time_chart_json = ""
+        link.time_chart_3d_json = ""
     completed_links = [link for link in links if link.mean_auroc is not None]
     if completed_links:
         run.best_link = max(completed_links, key=lambda item: item.mean_auroc or 0.0)
         run.best_link.scientific_metrics = build_scientific_metrics(run.best_link)
+        run.best_link.epoch_chart_json, run.best_link.time_chart_json = _build_epoch_chart(run, run.best_link)
+        run.best_link.epoch_chart_3d_json, run.best_link.time_chart_3d_json = _build_epoch_chart_3d(run, run.best_link)
     else:
         run.best_link = None
     run.active_link = next((link for link in links if link.state in {"training", "spawned"}), None)
@@ -386,6 +852,10 @@ def hydrate_run(run: Run, *, allow_sync_failure: bool, sync_remote: bool) -> Run
     run.eta_display = infer_eta_copy(run)
     run.external_cohort_count = len(getattr(run, "external_cohorts", []) or [])
     run.stage_title, run.stage_detail = build_stage_copy(run)
+    run.metric_map_chart_json = _build_run_metric_map(links)
+    run.metric_map_chart_3d_json = _build_run_metric_map_3d(links)
+    run.tradeoff_map_chart_json = _build_tradeoff_map(links)
+    run.tradeoff_map_chart_3d_json = _build_tradeoff_map_3d(links)
     return run
 
 
@@ -484,6 +954,19 @@ def history_page(request: HttpRequest) -> HttpResponse:
         "milestone_items_json": json.dumps(milestone_items),
     }
     return render(request, "core/dashboard.html", context)
+
+
+@require_GET
+def results_beta_page(request: HttpRequest) -> HttpResponse:
+    context = {
+        "results_beta": build_results_beta_context(),
+    }
+    return render(request, "core/results_beta.html", context)
+
+
+@require_POST
+def results_beta_infer(request: HttpRequest) -> HttpResponse:
+    return redirect("results-beta-page")
 
 
 @require_POST

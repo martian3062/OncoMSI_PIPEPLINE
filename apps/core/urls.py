@@ -1,22 +1,11 @@
 from django.urls import path
 
-from .views import (
-    dashboard,
-    dashboard_metrics_partial,
-    history_page,
-    history_partial,
-    launch_run,
-    live_runs_partial,
-    milestone_ticker_partial,
-)
+from .views import results_beta_infer, results_beta_page
 
 
 urlpatterns = [
-    path("", dashboard, name="dashboard"),
-    path("history/", history_page, name="history-page"),
-    path("partials/metrics/", dashboard_metrics_partial, name="dashboard-metrics-partial"),
-    path("partials/live-runs/", live_runs_partial, name="live-runs-partial"),
-    path("partials/milestones/", milestone_ticker_partial, name="milestone-ticker-partial"),
-    path("partials/history/", history_partial, name="history-partial"),
-    path("runs/launch/", launch_run, name="launch-run"),
+    path("", results_beta_page, name="dashboard"),
+    path("results/", results_beta_page, name="results-page"),
+    path("results-beta/", results_beta_page, name="results-beta-page"),
+    path("results-beta/infer/", results_beta_infer, name="results-beta-infer"),
 ]

@@ -1,0 +1,174 @@
+:root {
+  --bg: #f5f7fb;
+  --panel: #ffffff;
+  --text: #17263a;
+  --muted: #6a7b90;
+  --accent: #2278d4;
+  --accent-soft: #e7f1ff;
+  --border: rgba(23, 38, 58, 0.08);
+  --shadow: 0 20px 55px rgba(33, 58, 95, 0.12);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  font-family: "Segoe UI", sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(circle at top left, rgba(34, 120, 212, 0.08), transparent 28%),
+    linear-gradient(180deg, #ffffff, #eef4fb 72%);
+}
+
+.app-shell {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 34px 22px 48px;
+}
+
+.upload-card,
+.result-card,
+.detail-card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+}
+
+.upload-card,
+.result-card {
+  border-radius: 28px;
+  padding: 28px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+}
+
+h1 {
+  margin: 0;
+  font-size: 36px;
+  line-height: 1.05;
+}
+
+.lede {
+  margin: 14px 0 0;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.upload-form {
+  display: grid;
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.upload-drop {
+  display: grid;
+  gap: 10px;
+  padding: 24px;
+  border-radius: 24px;
+  border: 1px dashed rgba(34, 120, 212, 0.24);
+  background: var(--accent-soft);
+  cursor: pointer;
+  text-align: center;
+}
+
+.upload-drop input {
+  display: none;
+}
+
+.upload-drop span {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.upload-drop small {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+button {
+  justify-self: start;
+  border: 0;
+  border-radius: 999px;
+  padding: 14px 22px;
+  background: linear-gradient(135deg, var(--accent), #66adff);
+  color: white;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.result-card {
+  margin-top: 20px;
+}
+
+.result-card.empty {
+  color: var(--muted);
+}
+
+.result-card h2 {
+  margin: 0 0 10px;
+  font-size: 28px;
+}
+
+.result-grid {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px 16px;
+  margin-top: 18px;
+}
+
+.result-grid span {
+  color: var(--muted);
+}
+
+.result-grid strong {
+  text-align: right;
+}
+
+.result-note {
+  margin-top: 18px;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.details-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+}
+
+.detail-card {
+  border-radius: 22px;
+  padding: 18px;
+}
+
+.detail-card span {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.detail-card strong {
+  font-size: 24px;
+}
+
+@media (max-width: 780px) {
+  .details-grid {
+    grid-template-columns: 1fr;
+  }
+
+  h1 {
+    font-size: 30px;
+  }
+}

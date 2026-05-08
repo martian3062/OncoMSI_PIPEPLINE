@@ -28,6 +28,7 @@ def build_bundle_config(run: Run, target=None) -> dict[str, Any]:
         "slide_limit": run.requested_slide_limit,
         "n_folds": run.n_folds,
         "n_repeats": run.n_repeats,
+        "repeat_seeds": run.repeat_seeds,
         "external_cohorts": run.external_cohorts,
         "preferred_slide_pattern": "DX",
         "preferred_exact_suffix": "DX1",

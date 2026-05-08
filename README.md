@@ -1,30 +1,308 @@
-## Latest Semi-Final Result
+## FINAL APP STATE
 
-Latest validated semi-final result:
+Last README top refresh:
+- `2026-05-08 11:38:59 PM +05:30`
 
-- run id: `run-8635c038adcc`
-- result written: `2026-05-07 04:03:52 PM IST`
+This branch is now a `final` cleaned local app surface, not the older
+dashboard-heavy training control UI.
+
+The current frontend approach is intentionally narrow:
+- open directly to a `results-only` page at `/`
+- show preserved benchmark truth from the saved semi-final bundle
+- show the current VM training snapshot from the local Django database
+- avoid launch forms, upload shells, HTMX ticker noise, and control-plane clutter
+
+In plain terms, this app is now meant to answer:
+- what was the best validated MSI result?
+- how did the full leaderboard look?
+- what is the current remote Top-4 VM run doing?
+
+It is no longer trying to be the primary place to launch or babysit every part
+of the pipeline from the browser.
+
+### Final Current App Approach
+
+The app now follows a `read-only scientific summary` pattern:
+
+1. `Preserved benchmark layer`
+   - the page reads the latest preserved `final_summary.json`
+   - current source path:
+     `E:\Cleaned_MSI\archive\local_cleanup_2026-05-08\ten\run-8635c038adcc\final_summary.json`
+   - this is the trusted saved semi-final record that drives the leaderboard
+
+2. `Live VM snapshot layer`
+   - the page also reads the latest non-terminal `Run` from the local Django DB
+   - this gives a compact status block for the active remote experiment
+   - this is intentionally a summary block, not a full live orchestration console
+
+3. `Single-surface presentation`
+   - one clean page
+   - top benchmark summary
+   - current VM status
+   - Top-4 cards
+   - full leaderboard table
+
+### What The Current UI Shows
+
+The current `/` page shows:
+- best approach from the preserved semi-final bundle
+- cohort size
+- folds x repeats
+- approach count
+- MSI-H and MSS counts
+- source bundle path
+- active VM run id, state, slide count, folds x repeats, and branch progress
+- Top-4 snapshot
+- full 10-approach leaderboard
+
+### Current Preserved Benchmark Source
+
+Current preserved benchmark facts shown by the app:
+- bundle id: `run-8635c038adcc`
 - state: `completed`
-- completed approaches: `10 / 10`
-- failed approaches: `0`
+- slides: `200`
+- folds: `10`
+- repeats: `1`
+- approaches: `10`
+- MSI-H: `74`
+- MSS: `126`
 - best approach: `Approach2-Virchow2`
-- cohort: `200` TCGA COAD slides with `74 MSI-H` and `126 MSS`
-- bundle artifact: `final_summary.json`
 
-### Complete Semi-Final Results Table
+### Current Live VM Snapshot Shown In The App
 
-| Approach | Extractor used | AUROC | F1 macro | AUPRC | Bal Acc | MSI-H Recall | Specificity | Best threshold | State |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
-| Approach1-UNI2-h | `uni2-h` | `0.9729` | `0.9516` | `0.9842` | `0.9554` | `0.9519` | `0.9589` | `0.4091` | `completed` |
-| Approach2-Virchow2 | `virchow2` | `0.9771` | `0.9421` | `0.9875` | `0.9504` | `0.9276` | `0.9732` | `0.4956` | `completed` |
-| Approach3-Prov-GigaPath | `prov-gigapath` | `0.9667` | `0.9272` | `0.9798` | `0.9295` | `0.9519` | `0.9071` | `0.4318` | `completed` |
-| Approach4-CONCHv1.5 | `conchv1_5` | `0.9506` | `0.9103` | `0.9732` | `0.9225` | `0.8878` | `0.9571` | `0.4579` | `completed` |
-| Approach5-H-Optimus-0 | `h-optimus-0` | `0.9740` | `0.9289` | `0.9852` | `0.9316` | `0.9436` | `0.9196` | `0.3938` | `completed` |
-| Approach6-Midnight-12k | `midnight` | `0.9713` | `0.9554` | `0.9830` | `0.9542` | `0.9763` | `0.9321` | `0.4376` | `completed` |
-| Approach7-DINOv2-Large | `dinov2-large` | `0.8533` | `0.8288` | `0.9086` | `0.8239` | `0.8942` | `0.7536` | `0.4174` | `completed` |
-| Approach8-DINOv3ViT-B/16 | `dinov3-vitb16` | `0.9368` | `0.8990` | `0.9621` | `0.9088` | `0.8962` | `0.9214` | `0.4859` | `completed` |
-| Approach9-CHIEF | `chief` | `0.9486` | `0.9097` | `0.9724` | `0.9159` | `0.9122` | `0.9196` | `0.4973` | `completed` |
-| Approach10-RetCCL | `retccl` | `0.8849` | `0.8657` | `0.9271` | `0.8663` | `0.9218` | `0.8107` | `0.3580` | `completed` |
+Current active VM summary visible through the cleaned app:
+- run id: `run-65512be1f9c4`
+- experiment name: `final-top4-montecarlo-shared-5seed`
+- state currently saved in DB: `Matching Annotations`
+- selected slides: `200`
+- folds: `10`
+- repeats: `5`
+- total active approaches in this run: `4`
+- configured extractors:
+  `virchow2, midnight, uni2-h, h-optimus-0`
+- DB snapshot time currently shown:
+  `08 May 2026 04:16 PM`
+
+Note:
+the VM training itself has been checked live outside the page during this work,
+but the page deliberately shows the local saved run snapshot instead of trying
+to impersonate a full live terminal monitor.
+
+### Why This Final Shape Was Chosen
+
+This cleanup was done because the branch had become too messy as a combined:
+- experiment repo
+- archive dump
+- live launch console
+- result viewer
+
+The new `final` app shape is safer and easier to understand:
+- the root app now has one job: show trustworthy results
+- heavy historical outputs were moved into `archive/local_cleanup_2026-05-08/`
+- the frontend no longer pretends to do local inference or fresh WSI prediction
+- the preserved bundle remains the source of truth for the displayed benchmark
+
+### What Is Intentionally Not In The Final Frontend
+
+The cleaned app does not currently expose:
+- old dashboard tabs
+- launch forms
+- browser-side run launch workflow
+- upload-and-lookup shell
+- pseudo-live ticker animations
+- broad history/archive browsing in the main UI
+
+Those older pieces may still exist deeper in the codebase or archive history,
+but they are no longer the active user path for this branch.
+
+### Final UI Files
+
+The current active frontend surface is primarily:
+- `apps/core/results_beta.py`
+- `apps/core/templates/core/base.html`
+- `apps/core/templates/core/results_beta.html`
+- `apps/core/static/core/app.css`
+- `apps/core/urls.py`
+
+### Final README Note
+
+This top section now describes the current app truth.
+
+Older benchmark notes, hybrid history, semi-final tables, and prior
+architecture writeups are still kept below for reference, but they should be
+read as project history, not as the exact current frontend contract.
+
+## FINAL TOP-4 TRAINING PROTOCOL
+
+This branch is not only showing a final results page. It is also tied to the
+current `Top-4` repeated-fold experiment that is running on the VM.
+
+### Final Top-4 Run Identity
+
+| Item | Value |
+| --- | --- |
+| live run id | `run-65512be1f9c4` |
+| experiment name | `final-top4-montecarlo-shared-5seed` |
+| cohort | `TCGA COAD` |
+| requested slides | `200` |
+| outcome | `MSI-H` vs `MSS` |
+| folds | `10` |
+| repeats | `5` |
+| repeat seeds | `310, 42, 7, 2025, 1337` |
+| max parallel approaches | `2` |
+| max tiles per slide | `256` |
+| external cohort requested | `CPTAC-COAD` |
+
+### Final Top-4 Approaches Used
+
+| Slot | Approach label | Extractor | MIL model | Epochs | Batch | LR | Weight decay |
+| --- | --- | --- | --- | ---: | ---: | ---: | ---: |
+| 1 | `Approach1-UNI2-h` | `uni2-h` | `transmil` | `30` | `10` | `3e-5` | `8e-5` |
+| 2 | `Approach2-Virchow2` | `virchow2` | `transmil` | `30` | `10` | `3e-5` | `8e-5` |
+| 3 | `Approach5-H-Optimus-0` | `h-optimus-0` | `transmil` | `30` | `12` | `4e-5` | `1e-4` |
+| 4 | `Approach6-Midnight-12k` | `midnight` | `transmil` | `30` | `12` | `4e-5` | `1e-4` |
+
+### What The VM Is Actually Doing
+
+For each of the 4 approaches:
+- `5` repeat seeds are used
+- each repeat runs `10` folds
+- each fold trains for up to `30` epochs
+
+That means:
+
+| Level | Formula | Count |
+| --- | --- | ---: |
+| fold-runs per approach | `5 repeats x 10 folds` | `50` |
+| max epoch-runs per approach | `50 x 30` | `1500` |
+| fold-runs for all 4 approaches | `4 x 50` | `200` |
+| max epoch-runs for all 4 approaches | `4 x 50 x 30` | `6000` |
+
+So this is not a single leaderboard pass. It is a repeated-seed repeated-fold
+validation protocol intended to reduce luck in model ranking.
+
+## WHY MONTE CARLO IS USED
+
+The semi-final leaderboard had multiple strong models sitting very close
+together. In that situation, a one-shot AUROC is not enough.
+
+Monte Carlo style repeated-fold aggregation is used here to answer:
+- did a model really win?
+- or did it only win on one favorable seed / fold layout?
+
+The branch uses the phrase `Monte Carlo`, but technically the current setup is:
+- `repeated stratified k-fold cross-validation with seed perturbation`
+
+That is the correct practical reading of this experiment.
+
+## MONTE CARLO AGGREGATION FORMULA
+
+For each approach and for each metric:
+- `AUROC`
+- `F1`
+- `AUPRC`
+- `Bal Acc`
+- `MSI-H Recall`
+- `Specificity`
+- `Brier`
+
+the code aggregates all fold-seed results together.
+
+### Measurement Count
+
+For the current Top-4 run:
+
+| Quantity | Formula | Value |
+| --- | --- | ---: |
+| total measurements per metric per approach | `n_repeats x n_folds` | `5 x 10 = 50` |
+| seed-level means | `one mean per repeat seed` | `5` |
+
+### Reported Metric Formula
+
+If the per-fold-seed values are:
+`x1, x2, ..., xN`
+with `N = 50`, then:
+
+| Statistic | Formula |
+| --- | --- |
+| mean | `mean(x1 ... xN)` |
+| std | `population std(x1 ... xN)` |
+| sem | `std / sqrt(N)` |
+| ci_95_lo | `bootstrap 2.5 percentile of mean` |
+| ci_95_hi | `bootstrap 97.5 percentile of mean` |
+
+Bootstrap settings currently used in code:
+
+| Item | Value |
+| --- | --- |
+| bootstrap rounds | `10,000` |
+| bootstrap target | `mean` |
+| CI | `95%` |
+
+### Stability Formula
+
+Within each repeat seed:
+- compute the mean metric across the 10 folds
+- collect those repeat-level means
+
+Then:
+
+| Statistic | Formula |
+| --- | --- |
+| `seed_mean` | per-repeat mean metric |
+| `seed_var` | variance of the repeat-level means |
+| `fold_var` | mean of the within-repeat fold variances |
+| `stability_ratio` | `seed_var / fold_var` |
+
+Interpretation:
+
+| Pattern | Meaning |
+| --- | --- |
+| low `seed_var`, low `fold_var`, high mean | strong and trustworthy |
+| high `seed_var` | model ranking is seed-sensitive |
+| high `fold_var` | within-repeat fold noise is high |
+| `stability_ratio < 1` | between-seed drift is smaller than within-fold noise floor |
+
+## FILES PRODUCED BY THIS AGGREGATION
+
+The current code writes:
+
+| File | Meaning |
+| --- | --- |
+| `fold_metrics.csv` | per-fold metrics |
+| `metrics.json` | approach-level summary |
+| `per_slide_predictions.csv` | per-slide probabilities, labels, fold, repeat |
+| `monte_carlo_summary.json` | per-approach repeated-fold aggregate |
+| `top4_montecarlo_aggregate.json` | bundle-level Top-4 aggregate |
+| `threshold_calibration_summary.json` | threshold and calibration summary |
+| `reliability_diagram.csv` | calibration bin summary |
+
+## WHY THIS MATTERS FOR THE FINAL APP
+
+The cleaned final frontend only shows a simple results surface, but the numbers
+behind that surface are not meant to be read as one-shot scores.
+
+The intended scientific story is:
+1. train the Top-4 across repeated seeds and folds
+2. aggregate all `50` measurements per approach
+3. compare both `mean performance` and `stability`
+4. only then decide what deserves to be called the best final model
+
+That is why the README now needs both:
+- the `final app` explanation
+- the `experiment protocol + Monte Carlo formula` explanation
+
+## CODE PATHS FOR THIS PROTOCOL
+
+The current branch implements this through:
+- `launch_top4_montecarlo.py`
+- `vm_patch/run_tcga_coad_automated_triad.py`
+- `tools/top4_monte_carlo_aggregator.py`
+- `tools/top4_analysis_common.py`
+- `tools/top4_pairwise_compare.py`
+- `tools/top4_calibration_report.py`
+- `tools/run_external_eval.py`
+- `tools/package_inference.py`
 
 # OncoMSI_PIPEPLINE
 
@@ -632,6 +910,7 @@ VM_CONDA_ENV=pathology310
 VM_RUNNER_PYTHON=/home/pardeep/.venvs/pathology310-hybrid/bin/python
 VM_PROJECT_ROOT=/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc
 VM_RUNNER_SCRIPT=/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/scripts/run_tcga_coad_automated_triad.py
+VM_MAX_PARALLEL_APPROACHES=2
 VM_DEFAULT_ANNOTATIONS=annotations/tcga_coad_bucket_annotations_final_all3_live_dx1.csv
 VM_VIRCHOW_WEIGHTS=/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/models/virchow/pytorch_model.bin
 ```

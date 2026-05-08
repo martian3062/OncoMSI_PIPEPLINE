@@ -1,0 +1,6 @@
+msi_status,slide,file_id,file_size_bytes,gdc_url
+MSI-H,TCGA-5M-AAT6-01Z-00-DX1.8834C952-14E3-4491-8156-52FC917BB014.svs,e5d2f743-a51f-4ba7-a23d-e87a069a7ee1,1766078883,https://api.gdc.cancer.gov/data/e5d2f743-a51f-4ba7-a23d-e87a069a7ee1
+MSI-H,TCGA-A6-2672-01Z-00-DX1.e2a845c8-6d77-4120-9f43-abec84a66c1c.svs,39a4f424-780f-44fe-8d60-1e2ffe8ce6c6,160280869,https://api.gdc.cancer.gov/data/39a4f424-780f-44fe-8d60-1e2ffe8ce6c6
+MSS,TCGA-3L-AA1B-01Z-00-DX1.8923A151-A690-40B7-9E5A-FCBEDFC2394F.svs,ed5f8c30-29e3-4144-948b-b8658564f2d6,1228418533,https://api.gdc.cancer.gov/data/ed5f8c30-29e3-4144-948b-b8658564f2d6
+MSS,TCGA-4N-A93T-01Z-00-DX1.82E240B1-22C3-46E3-891F-0DCE35C43F8B.svs,dffdc56e-f1f5-4a1b-a16b-561462b3b740,938870973,https://api.gdc.cancer.gov/data/dffdc56e-f1f5-4a1b-a16b-561462b3b740
+MSS,TCGA-4T-AA8H-01Z-00-DX1.A46C759C-74A2-4724-B6B5-DECA0D16E029.svs,04d586ad-4f74-453f-a9c6-f8bd134ae11c,2145045839,https://api.gdc.cancer.gov/data/04d586ad-4f74-453f-a9c6-f8bd134ae11c

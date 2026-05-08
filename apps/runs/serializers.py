@@ -56,6 +56,7 @@ class RunSerializer(serializers.ModelSerializer):
             "max_tiles_per_slide",
             "n_folds",
             "n_repeats",
+            "repeat_seeds",
             "external_cohorts",
             "state",
             "remote_status_path",

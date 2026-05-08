@@ -94,6 +94,168 @@
         {% endfor %}
       </div>
       {% endif %}
+      {% if run.metric_map_chart_json or run.tradeoff_map_chart_json %}
+      <div class="visual-grid">
+        {% if run.metric_map_chart_json %}
+        <div class="viz-card">
+          <div class="section-head">
+            <h4>Metric Map</h4>
+            <span>All approaches</span>
+          </div>
+          <div id="metric-map-{{ run.run_id }}" class="chart-host chart-host-tall"></div>
+          <script>
+            (() => {
+              const payload = {{ run.metric_map_chart_json|safe }};
+              Plotly.newPlot("metric-map-{{ run.run_id }}", payload.data, payload.layout, {displayModeBar: false, responsive: true});
+            })();
+          </script>
+        </div>
+        {% endif %}
+        {% if run.tradeoff_map_chart_json %}
+        <div class="viz-card">
+          <div class="section-head">
+            <h4>Recall vs Specificity</h4>
+            <span>Bubble size tracks AUROC</span>
+          </div>
+          <div id="tradeoff-map-{{ run.run_id }}" class="chart-host"></div>
+          <script>
+            (() => {
+              const payload = {{ run.tradeoff_map_chart_json|safe }};
+              Plotly.newPlot("tradeoff-map-{{ run.run_id }}", payload.data, payload.layout, {displayModeBar: false, responsive: true});
+            })();
+          </script>
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
+      {% if run.metric_map_chart_3d_json or run.tradeoff_map_chart_3d_json %}
+      <div class="visual-grid">
+        {% if run.metric_map_chart_3d_json %}
+        <div class="viz-card">
+          <div class="section-head">
+            <h4>Metric Terrain 3D</h4>
+            <span>Additional 3D comparison</span>
+          </div>
+          <div id="metric-map-3d-{{ run.run_id }}" class="chart-host chart-host-tall"></div>
+          <script>
+            (() => {
+              const payload = {{ run.metric_map_chart_3d_json|safe }};
+              Plotly.newPlot("metric-map-3d-{{ run.run_id }}", payload.data, payload.layout, {displayModeBar: false, responsive: true});
+            })();
+          </script>
+        </div>
+        {% endif %}
+        {% if run.tradeoff_map_chart_3d_json %}
+        <div class="viz-card">
+          <div class="section-head">
+            <h4>Tradeoff Space 3D</h4>
+            <span>Specificity, recall, and AUROC</span>
+          </div>
+          <div id="tradeoff-map-3d-{{ run.run_id }}" class="chart-host"></div>
+          <script>
+            (() => {
+              const payload = {{ run.tradeoff_map_chart_3d_json|safe }};
+              Plotly.newPlot("tradeoff-map-3d-{{ run.run_id }}", payload.data, payload.layout, {displayModeBar: false, responsive: true});
+            })();
+          </script>
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
+      {% if run.best_link and run.best_link.fold_chart_json %}
+      <div class="visual-grid">
+        <div class="viz-card">
+          <div class="section-head">
+            <h4>Fold Curves</h4>
+            <span>{{ run.best_link.approach_template.label }}</span>
+          </div>
+          <div id="fold-chart-{{ run.run_id }}" class="chart-host"></div>
+          <script>
+            (() => {
+              const payload = {{ run.best_link.fold_chart_json|safe }};
+              Plotly.newPlot("fold-chart-{{ run.run_id }}", payload.data, payload.layout, {displayModeBar: false, responsive: true});
+            })();
+          </script>
+        </div>
+        {% if run.best_link.epoch_chart_json %}
+        <div class="viz-card">
+          <div class="section-head">
+            <h4>Epoch Learning Curves</h4>
+            <span>Loss and validation AUROC over epochs</span>
+          </div>
+          <div id="epoch-chart-{{ run.run_id }}" class="chart-host"></div>
+          <script>
+            (() => {
+              const payload = {{ run.best_link.epoch_chart_json|safe }};
+              Plotly.newPlot("epoch-chart-{{ run.run_id }}", payload.data, payload.layout, {displayModeBar: false, responsive: true});
+            })();
+          </script>
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
+      {% if run.best_link and run.best_link.fold_chart_3d_json %}
+      <div class="visual-grid">
+        <div class="viz-card">
+          <div class="section-head">
+            <h4>Fold Surface 3D</h4>
+            <span>{{ run.best_link.approach_template.label }}</span>
+          </div>
+          <div id="fold-chart-3d-{{ run.run_id }}" class="chart-host"></div>
+          <script>
+            (() => {
+              const payload = {{ run.best_link.fold_chart_3d_json|safe }};
+              Plotly.newPlot("fold-chart-3d-{{ run.run_id }}", payload.data, payload.layout, {displayModeBar: false, responsive: true});
+            })();
+          </script>
+        </div>
+        {% if run.best_link.epoch_chart_3d_json %}
+        <div class="viz-card">
+          <div class="section-head">
+            <h4>Epoch Space 3D</h4>
+            <span>Loss and AUROC across epoch lanes</span>
+          </div>
+          <div id="epoch-chart-3d-{{ run.run_id }}" class="chart-host"></div>
+          <script>
+            (() => {
+              const payload = {{ run.best_link.epoch_chart_3d_json|safe }};
+              Plotly.newPlot("epoch-chart-3d-{{ run.run_id }}", payload.data, payload.layout, {displayModeBar: false, responsive: true});
+            })();
+          </script>
+        </div>
+        {% endif %}
+      </div>
+      {% endif %}
+      {% if run.best_link and run.best_link.time_chart_json %}
+      <div class="viz-card">
+        <div class="section-head">
+          <h4>Time Graph</h4>
+          <span>Per-epoch runtime and cumulative minutes</span>
+        </div>
+        <div id="time-chart-{{ run.run_id }}" class="chart-host"></div>
+        <script>
+          (() => {
+            const payload = {{ run.best_link.time_chart_json|safe }};
+            Plotly.newPlot("time-chart-{{ run.run_id }}", payload.data, payload.layout, {displayModeBar: false, responsive: true});
+          })();
+        </script>
+      </div>
+      {% endif %}
+      {% if run.best_link and run.best_link.time_chart_3d_json %}
+      <div class="viz-card">
+        <div class="section-head">
+          <h4>Time Space 3D</h4>
+          <span>Runtime path with AUROC over time</span>
+        </div>
+        <div id="time-chart-3d-{{ run.run_id }}" class="chart-host"></div>
+        <script>
+          (() => {
+            const payload = {{ run.best_link.time_chart_3d_json|safe }};
+            Plotly.newPlot("time-chart-3d-{{ run.run_id }}", payload.data, payload.layout, {displayModeBar: false, responsive: true});
+          })();
+        </script>
+      </div>
+      {% endif %}
       <div class="mini-chart-card">
         <div class="section-head">
           <h4>Live Leaderboard</h4>

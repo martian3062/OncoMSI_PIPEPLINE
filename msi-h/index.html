@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MSI-H Local Output</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <section class="upload-card">
+      <p class="eyebrow">MSI-H Local</p>
+      <h1>Upload image and get trained-output details</h1>
+      <p class="lede">
+        This local app uses the preserved H-Optimus trained-result bundle. If the uploaded
+        file name matches a known slide from the saved cohort, it returns the saved output
+        details for that trained case.
+      </p>
+
+      <form id="upload-form" class="upload-form">
+        <label class="upload-drop">
+          <input id="file-input" type="file" accept=".svs,.tif,.tiff,.png,.jpg,.jpeg">
+          <span>Select slide / image</span>
+          <small>The file stays local and is only used for name-based saved-result lookup.</small>
+        </label>
+        <button type="submit">Show output</button>
+      </form>
+    </section>
+
+    <section id="result-card" class="result-card empty">
+      <h2>No output yet</h2>
+      <p>Upload a file to see the saved trained-output details.</p>
+    </section>
+
+    <section class="details-grid">
+      <article class="detail-card">
+        <span>Model used</span>
+        <strong>H-Optimus-0</strong>
+      </article>
+      <article class="detail-card">
+        <span>Training head</span>
+        <strong>TransMIL</strong>
+      </article>
+      <article class="detail-card">
+        <span>Mean threshold</span>
+        <strong id="threshold-value">-</strong>
+      </article>
+      <article class="detail-card">
+        <span>Mean AUROC</span>
+        <strong id="auroc-value">-</strong>
+      </article>
+      <article class="detail-card">
+        <span>MSI-H Recall</span>
+        <strong id="recall-value">-</strong>
+      </article>
+      <article class="detail-card">
+        <span>Specificity</span>
+        <strong id="specificity-value">-</strong>
+      </article>
+    </section>
+  </main>
+
+  <script src="./app.js"></script>
+</body>
+</html>

@@ -34,6 +34,7 @@ class Run(models.Model):
     max_tiles_per_slide = models.PositiveIntegerField(default=96)
     n_folds = models.PositiveIntegerField(default=2)
     n_repeats = models.PositiveIntegerField(default=2)
+    repeat_seeds = models.JSONField(default=list, blank=True)
     external_cohorts = models.JSONField(default=list, blank=True)
     state = models.CharField(max_length=64, choices=RunState.choices, default=RunState.MATCHING_ANNOTATIONS)
     remote_status_path = models.CharField(max_length=255, blank=True)
