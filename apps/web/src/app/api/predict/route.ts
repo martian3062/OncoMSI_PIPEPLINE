@@ -1,3 +1,5 @@
+import { proxyJson } from "../_lib/proxy";
+
 const DJANGO_API_BASE_URL =
   process.env.DJANGO_API_BASE_URL || "http://127.0.0.1:8000";
 
@@ -12,14 +14,7 @@ export async function GET(request: Request) {
   if (mode) {
     url.searchParams.set("mode", mode);
   }
-  const response = await fetch(url.toString(), { cache: "no-store" });
-  const payload = await response.text();
-  return new Response(payload, {
-    status: response.status,
-    headers: {
-      "content-type": response.headers.get("content-type") || "application/json",
-    },
-  });
+  return proxyJson(url.toString());
 }
 
 export async function POST(request: Request) {
@@ -41,12 +36,5 @@ export async function POST(request: Request) {
     cache: "no-store",
     duplex: "half",
   };
-  const response = await fetch(url.toString(), init);
-  const payload = await response.text();
-  return new Response(payload, {
-    status: response.status,
-    headers: {
-      "content-type": response.headers.get("content-type") || "application/json",
-    },
-  });
+  return proxyJson(url.toString(), init);
 }

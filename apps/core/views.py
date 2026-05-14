@@ -222,6 +222,47 @@ def _load_json_count(path: Path) -> int:
     return 0
 
 
+def _format_eta_label(total_seconds: int | None) -> str:
+    if total_seconds is None:
+        return ""
+    seconds = max(0, int(total_seconds))
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes}m"
+    if minutes:
+        return f"{minutes}m {seconds}s"
+    return f"{seconds}s"
+
+
+def _batch_eta_snapshot(batch_name: str, remaining: int) -> dict[str, Any]:
+    if not batch_name or remaining <= 0:
+        return {"eta_seconds": 0, "eta_label": "", "avg_slide_seconds": None}
+    rows = load_prediction_history(limit=None)
+    matching_rows = [
+        item for item in rows
+        if str(item.get("source_group") or "") == batch_name
+        and isinstance(item.get("elapsed_seconds"), (int, float))
+        and float(item.get("elapsed_seconds") or 0) > 0
+    ]
+    if not matching_rows and batch_name.startswith("dx1-nontrain-batch-"):
+        matching_rows = [
+            item for item in rows
+            if str(item.get("source_group") or "").startswith("dx1-nontrain-batch-")
+            and isinstance(item.get("elapsed_seconds"), (int, float))
+            and float(item.get("elapsed_seconds") or 0) > 0
+        ]
+    if not matching_rows:
+        return {"eta_seconds": None, "eta_label": "", "avg_slide_seconds": None}
+    avg_slide_seconds = int(round(sum(float(item.get("elapsed_seconds") or 0) for item in matching_rows) / len(matching_rows)))
+    eta_seconds = max(0, avg_slide_seconds * remaining)
+    return {
+        "eta_seconds": eta_seconds,
+        "eta_label": _format_eta_label(eta_seconds),
+        "avg_slide_seconds": avg_slide_seconds,
+    }
+
+
 def _runtime_batch_status() -> dict:
     runtime_root = Path(settings.BASE_DIR) / "runtime" / "storage_batches"
     if not runtime_root.exists():
@@ -236,6 +277,9 @@ def _runtime_batch_status() -> dict:
             "percent": 0,
             "current_file": "",
             "queued_batches": [],
+            "eta_seconds": None,
+            "eta_label": "",
+            "avg_slide_seconds": None,
             "updated_at": timezone.now().isoformat(),
         }
 
@@ -304,6 +348,9 @@ def _runtime_batch_status() -> dict:
             "percent": 0,
             "current_file": "",
             "queued_batches": queued_batches,
+            "eta_seconds": None,
+            "eta_label": "",
+            "avg_slide_seconds": None,
             "updated_at": timezone.now().isoformat(),
         }
 
@@ -341,13 +388,15 @@ def _runtime_batch_status() -> dict:
             break
 
     if phase == "predicting":
-        percent = int(round((completed_count / max(1, selected_count)) * 100))
+        percent = int(round((current_index / max(1, selected_count)) * 100))
     elif phase == "downloading":
         percent = int(round((current_index / max(1, selected_count)) * 100))
     elif phase == "completed":
         percent = 100
     else:
         percent = int(round((completed_count / max(1, selected_count)) * 100)) if selected_count else 0
+    remaining = max(0, selected_count - completed_count)
+    eta_snapshot = _batch_eta_snapshot(active_batch_name, remaining if phase == "predicting" else 0)
 
     return {
         "has_active_batch": True,
@@ -360,6 +409,9 @@ def _runtime_batch_status() -> dict:
         "percent": max(0, min(100, percent)),
         "current_file": current_file,
         "queued_batches": queued_batches,
+        "eta_seconds": eta_snapshot.get("eta_seconds"),
+        "eta_label": eta_snapshot.get("eta_label"),
+        "avg_slide_seconds": eta_snapshot.get("avg_slide_seconds"),
         "updated_at": timezone.now().isoformat(),
     }
 
@@ -375,25 +427,189 @@ def _slide_type_for_name(name: str) -> str:
     return ""
 
 
+def _planned_batch_total(batch_dir: Path) -> int:
+    selected_count = _load_json_count(batch_dir / "selected_rows.json")
+    if selected_count:
+        return selected_count
+    watcher = next(batch_dir.glob("autostart_after_*.sh"), None)
+    if not watcher or not watcher.exists():
+        return 0
+    try:
+        script_text = watcher.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return 0
+    match = re.search(r"--first-n\s+(\d+)", script_text)
+    if match:
+        try:
+            return int(match.group(1))
+        except ValueError:
+            return 0
+    return 0
+
+
 def _batch_progress_rows() -> list[dict[str, Any]]:
     runtime_root = Path(settings.BASE_DIR) / "runtime" / "storage_batches"
     if not runtime_root.exists():
         return []
+    try:
+        process_result = subprocess.run(
+            ["pgrep", "-af", "storage_batch_vm_runner.py"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        process_lines = [line.strip() for line in process_result.stdout.splitlines() if line.strip()]
+    except Exception:
+        process_lines = []
     rows: list[dict[str, Any]] = []
     for batch_dir in sorted((path for path in runtime_root.iterdir() if path.is_dir()), key=lambda item: item.name):
-        selected_count = _load_json_count(batch_dir / "selected_rows.json")
-        completed_count = _count_jsonl_rows(batch_dir / "prediction_results.jsonl")
         watcher = next(batch_dir.glob("autostart_after_*.sh"), None)
+        selected_count = _planned_batch_total(batch_dir)
+        completed_count = _count_jsonl_rows(batch_dir / "prediction_results.jsonl")
+        is_active_runner = any(f"--batch-name {batch_dir.name}" in line for line in process_lines)
+        if selected_count and completed_count >= selected_count:
+            status = "completed"
+        elif is_active_runner:
+            status = "running"
+        elif watcher:
+            status = "queued"
+        else:
+            status = "idle"
         rows.append(
             {
                 "batch_name": batch_dir.name,
                 "selected_total": selected_count,
                 "completed_total": completed_count,
-                "status": "completed" if selected_count and completed_count >= selected_count else "queued" if watcher and not (batch_dir / "runner.log").exists() else "running" if (batch_dir / "runner.log").exists() else "idle",
+                "status": status,
                 "has_autostart": bool(watcher),
             }
         )
     return rows
+
+
+def _reference_models_from_readme() -> list[dict[str, Any]]:
+    return [
+        {
+            "name": "Approach1-UNI2-h",
+            "extractor": "uni2-h",
+            "auroc": 0.9729,
+            "f1_macro": 0.9516,
+            "auprc": 0.9842,
+            "balanced_accuracy": 0.9554,
+            "msi_h_recall": 0.9519,
+            "specificity": 0.9589,
+            "best_threshold": 0.4091,
+            "state": "completed",
+        },
+        {
+            "name": "Approach2-Virchow2",
+            "extractor": "virchow2",
+            "auroc": 0.9771,
+            "f1_macro": 0.9421,
+            "auprc": 0.9875,
+            "balanced_accuracy": 0.9504,
+            "msi_h_recall": 0.9276,
+            "specificity": 0.9732,
+            "best_threshold": 0.4956,
+            "state": "completed",
+        },
+        {
+            "name": "Approach3-Prov-GigaPath",
+            "extractor": "prov-gigapath",
+            "auroc": 0.9667,
+            "f1_macro": 0.9272,
+            "auprc": 0.9798,
+            "balanced_accuracy": 0.9295,
+            "msi_h_recall": 0.9519,
+            "specificity": 0.9071,
+            "best_threshold": 0.4318,
+            "state": "completed",
+        },
+        {
+            "name": "Approach4-CONCHv1.5",
+            "extractor": "conchv1_5",
+            "auroc": 0.9506,
+            "f1_macro": 0.9103,
+            "auprc": 0.9732,
+            "balanced_accuracy": 0.9225,
+            "msi_h_recall": 0.8878,
+            "specificity": 0.9571,
+            "best_threshold": 0.4579,
+            "state": "completed",
+        },
+        {
+            "name": "Approach5-H-Optimus-0",
+            "extractor": "h-optimus-0",
+            "auroc": 0.9740,
+            "f1_macro": 0.9289,
+            "auprc": 0.9852,
+            "balanced_accuracy": 0.9316,
+            "msi_h_recall": 0.9436,
+            "specificity": 0.9196,
+            "best_threshold": 0.3938,
+            "state": "completed",
+        },
+        {
+            "name": "Approach6-Midnight-12k",
+            "extractor": "midnight",
+            "auroc": 0.9713,
+            "f1_macro": 0.9554,
+            "auprc": 0.9830,
+            "balanced_accuracy": 0.9542,
+            "msi_h_recall": 0.9763,
+            "specificity": 0.9321,
+            "best_threshold": 0.4376,
+            "state": "completed",
+        },
+        {
+            "name": "Approach7-DINOv2-Large",
+            "extractor": "dinov2-large",
+            "auroc": 0.8533,
+            "f1_macro": 0.8288,
+            "auprc": 0.9086,
+            "balanced_accuracy": 0.8239,
+            "msi_h_recall": 0.8942,
+            "specificity": 0.7536,
+            "best_threshold": 0.4174,
+            "state": "completed",
+        },
+        {
+            "name": "Approach8-DINOv3ViT-B/16",
+            "extractor": "dinov3-vitb16",
+            "auroc": 0.9368,
+            "f1_macro": 0.8990,
+            "auprc": 0.9621,
+            "balanced_accuracy": 0.9088,
+            "msi_h_recall": 0.8962,
+            "specificity": 0.9214,
+            "best_threshold": 0.4859,
+            "state": "completed",
+        },
+        {
+            "name": "Approach9-CHIEF",
+            "extractor": "chief",
+            "auroc": 0.9486,
+            "f1_macro": 0.9097,
+            "auprc": 0.9724,
+            "balanced_accuracy": 0.9159,
+            "msi_h_recall": 0.9122,
+            "specificity": 0.9196,
+            "best_threshold": 0.4973,
+            "state": "completed",
+        },
+        {
+            "name": "Approach10-RetCCL",
+            "extractor": "retccl",
+            "auroc": 0.8849,
+            "f1_macro": 0.8657,
+            "auprc": 0.9271,
+            "balanced_accuracy": 0.8663,
+            "msi_h_recall": 0.9218,
+            "specificity": 0.8107,
+            "best_threshold": 0.3580,
+            "state": "completed",
+        },
+    ]
 
 
 def _history_analysis_payload() -> dict[str, Any]:
@@ -431,6 +647,12 @@ def _history_analysis_payload() -> dict[str, Any]:
         type_rows = [item for item in scored_rows if (_slide_type_for_name(str(item.get("uploaded_name") or "")) or "Unknown") == slide_type]
         type_total = len(type_rows)
         type_correct = sum(1 for item in type_rows if str(item.get("label") or "") == str(item.get("expected_label") or ""))
+        type_false_positive = sum(
+            1 for item in type_rows if str(item.get("expected_label") or "") == "MSS" and str(item.get("label") or "") == "MSI-H"
+        )
+        type_false_negative = sum(
+            1 for item in type_rows if str(item.get("expected_label") or "") == "MSI-H" and str(item.get("label") or "") == "MSS"
+        )
         by_slide_type.append(
             {
                 "name": slide_type,
@@ -438,6 +660,8 @@ def _history_analysis_payload() -> dict[str, Any]:
                 "correct": type_correct,
                 "wrong": type_total - type_correct,
                 "accuracy": round((type_correct / type_total) if type_total else 0.0, 4),
+                "false_positive": type_false_positive,
+                "false_negative": type_false_negative,
             }
         )
     by_pipeline_mode: list[dict[str, Any]] = []
@@ -452,6 +676,31 @@ def _history_analysis_payload() -> dict[str, Any]:
                 "correct": mode_correct,
                 "wrong": mode_total - mode_correct,
                 "accuracy": round((mode_correct / mode_total) if mode_total else 0.0, 4),
+            }
+        )
+    by_serving_variant: list[dict[str, Any]] = []
+    serving_groups: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
+    for item in scored_rows:
+        encoder_label = str(item.get("encoder_label") or "unknown")
+        pipeline_mode = str(item.get("pipeline_mode") or "unknown")
+        checkpoint_count = str(item.get("checkpoint_count") or "-")
+        feature_dim = str(item.get("feature_dim") or "-")
+        group_key = (pipeline_mode, encoder_label, checkpoint_count, feature_dim)
+        serving_groups.setdefault(group_key, []).append(item)
+    for (pipeline_mode, encoder_label, checkpoint_count, feature_dim), variant_rows in sorted(serving_groups.items()):
+        variant_total = len(variant_rows)
+        variant_correct = sum(1 for item in variant_rows if str(item.get("label") or "") == str(item.get("expected_label") or ""))
+        by_serving_variant.append(
+            {
+                "name": f"{encoder_label} / {pipeline_mode}",
+                "pipeline_mode": pipeline_mode,
+                "encoder_label": encoder_label,
+                "checkpoint_count": checkpoint_count,
+                "feature_dim": feature_dim,
+                "total": variant_total,
+                "correct": variant_correct,
+                "wrong": variant_total - variant_correct,
+                "accuracy": round((variant_correct / variant_total) if variant_total else 0.0, 4),
             }
         )
     recent_wrong = []
@@ -493,6 +742,7 @@ def _history_analysis_payload() -> dict[str, Any]:
         "by_source_group": by_source_group,
         "by_slide_type": by_slide_type,
         "by_pipeline_mode": by_pipeline_mode,
+        "by_serving_variant": by_serving_variant,
         "confidence_distribution": [
             {"name": level, "count": confidence_counter[level]}
             for level in ["High", "Medium", "Low", "Unknown"]
@@ -510,7 +760,8 @@ def _history_analysis_payload() -> dict[str, Any]:
             "available_checkpoints": inference_meta.get("available_checkpoints"),
             "mean_threshold": inference_meta.get("mean_threshold"),
         },
-        "recent_wrong_cases": recent_wrong[:12],
+        "reference_models": _reference_models_from_readme(),
+        "recent_wrong_cases": recent_wrong,
         "updated_at": timezone.now().isoformat(),
     }
 

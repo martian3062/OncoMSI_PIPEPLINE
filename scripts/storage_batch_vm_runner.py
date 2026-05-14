@@ -168,6 +168,14 @@ def get_json(url: str) -> dict[str, Any]:
         return json.loads(response.read().decode("utf-8"))
 
 
+def is_retryable_backend_error(exc: Exception) -> bool:
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code >= 500
+    if isinstance(exc, urllib.error.URLError):
+        return True
+    return isinstance(exc, ConnectionError)
+
+
 def restart_local_django_server(project_root: Path, django_python: str, api_base: str) -> None:
     runserver_match = "manage.py runserver 0.0.0.0:8000"
     subprocess.run(["pkill", "-f", runserver_match], check=False)
@@ -192,6 +200,42 @@ def restart_local_django_server(project_root: Path, django_python: str, api_base
         except Exception:
             time.sleep(2)
     raise RuntimeError("Django backend did not come back after restart.")
+
+
+def queue_with_recovery(
+    item: dict[str, Any],
+    *,
+    api_base: str,
+    mode: str,
+    poll_seconds: int,
+    job_timeout_seconds: int,
+    project_root: Path,
+    django_python: str,
+    recovery_attempts: int = 2,
+) -> dict[str, Any]:
+    attempt = 0
+    while True:
+        try:
+            return queue_and_wait(
+                item,
+                api_base=api_base,
+                mode=mode,
+                poll_seconds=poll_seconds,
+                job_timeout_seconds=job_timeout_seconds,
+            )
+        except TimeoutError:
+            raise
+        except Exception as exc:
+            attempt += 1
+            if attempt > recovery_attempts or not is_retryable_backend_error(exc):
+                raise
+            print(
+                f"[recover {attempt}/{recovery_attempts}] {item['bucket_name']} "
+                f"mode={mode} detail={exc}",
+                flush=True,
+            )
+            restart_local_django_server(project_root, django_python, api_base)
+            time.sleep(max(2, poll_seconds))
 
 
 def queue_and_wait(
@@ -317,12 +361,14 @@ def main() -> int:
         print(f"[predict {index}/{len(matched_rows)}] {item['bucket_name']}", flush=True)
         effective_mode = args.mode
         try:
-            payload = queue_and_wait(
+            payload = queue_with_recovery(
                 item,
                 api_base=args.api_base,
                 mode=effective_mode,
                 poll_seconds=args.poll_seconds,
                 job_timeout_seconds=args.job_timeout_seconds,
+                project_root=project_root,
+                django_python=args.django_python,
             )
         except TimeoutError as exc:
             print(f"[timeout {index}/{len(matched_rows)}] {item['bucket_name']} mode={effective_mode} detail={exc}", flush=True)
@@ -330,12 +376,14 @@ def main() -> int:
                 restart_local_django_server(project_root, args.django_python, args.api_base)
                 effective_mode = args.fallback_mode
                 print(f"[fallback {index}/{len(matched_rows)}] {item['bucket_name']} mode={effective_mode}", flush=True)
-                payload = queue_and_wait(
+                payload = queue_with_recovery(
                     item,
                     api_base=args.api_base,
                     mode=effective_mode,
                     poll_seconds=args.poll_seconds,
                     job_timeout_seconds=max(300, args.job_timeout_seconds // 2),
+                    project_root=project_root,
+                    django_python=args.django_python,
                 )
             else:
                 row = {

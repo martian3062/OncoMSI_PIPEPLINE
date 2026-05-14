@@ -191,6 +191,8 @@ type AnalysisDatum = {
   wrong?: number;
   accuracy?: number;
   count?: number;
+  false_positive?: number;
+  false_negative?: number;
 };
 
 type AnalysisPayload = {
@@ -213,6 +215,17 @@ type AnalysisPayload = {
   by_source_group: AnalysisDatum[];
   by_slide_type: AnalysisDatum[];
   by_pipeline_mode: AnalysisDatum[];
+  by_serving_variant: Array<{
+    name: string;
+    pipeline_mode: string;
+    encoder_label: string;
+    checkpoint_count: string;
+    feature_dim: string;
+    total: number;
+    correct: number;
+    wrong: number;
+    accuracy: number;
+  }>;
   confidence_distribution: AnalysisDatum[];
   batch_progress: Array<{
     batch_name: string;
@@ -232,6 +245,18 @@ type AnalysisPayload = {
     available_checkpoints?: number;
     mean_threshold?: number;
   };
+  reference_models: Array<{
+    name: string;
+    extractor: string;
+    auroc?: number | null;
+    f1_macro?: number | null;
+    auprc?: number | null;
+    balanced_accuracy?: number | null;
+    msi_h_recall?: number | null;
+    specificity?: number | null;
+    best_threshold?: number | null;
+    state?: string;
+  }>;
   recent_wrong_cases: Array<{
     uploaded_name?: string;
     patient?: string;
@@ -257,6 +282,9 @@ type BatchStatusPayload = {
   percent: number;
   current_file: string;
   queued_batches: string[];
+  eta_seconds?: number | null;
+  eta_label?: string;
+  avg_slide_seconds?: number | null;
   updated_at: string;
 };
 
@@ -276,6 +304,15 @@ type LiveStageRecord = {
 type JobOrigin = "upload" | "storage" | null;
 
 const BROWSER_RENDERABLE_IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "bmp", "webp", "gif"]);
+
+async function readApiError(response: Response, fallback: string) {
+  try {
+    const payload = (await response.json()) as { error?: string };
+    return payload.error || fallback;
+  } catch {
+    return fallback;
+  }
+}
 
 export default function Home() {
   const [file, setFile] = useState<File | null>(null);
@@ -309,6 +346,8 @@ export default function Home() {
   const [pendingHistoryLookup, setPendingHistoryLookup] = useState("");
   const [selectedHistoryItem, setSelectedHistoryItem] = useState<PredictionHistoryItem | null>(null);
   const [selectedStorageBucket, setSelectedStorageBucket] = useState("");
+  const [analysisError, setAnalysisError] = useState("");
+  const [batchStatusError, setBatchStatusError] = useState("");
   const pollFailureCountRef = useRef(0);
   const directPredictApi = useMemo(() => {
     if (typeof window === "undefined") {
@@ -352,27 +391,40 @@ export default function Home() {
   useEffect(() => {
     let isMounted = true;
     async function loadLibraryData() {
-      try {
-        const [storageResponse, historyResponse, batchStatusResponse, analysisResponse] = await Promise.all([
+      const [storageResult, historyResult, batchStatusResult, analysisResult] = await Promise.allSettled([
           fetch("/api/storage?compact=1", { cache: "no-store" }),
           fetch("/api/history?compact=1", { cache: "no-store" }),
           fetch("/api/batch-status", { cache: "no-store" }),
           fetch("/api/analysis", { cache: "no-store" }),
-        ]);
-        if (isMounted && storageResponse.ok) {
-          setStorageManifest((await storageResponse.json()) as StorageManifest);
+      ]);
+      if (!isMounted) {
+        return;
+      }
+      if (storageResult.status === "fulfilled" && storageResult.value.ok) {
+        setStorageManifest((await storageResult.value.json()) as StorageManifest);
+      }
+      if (historyResult.status === "fulfilled" && historyResult.value.ok) {
+        setPredictionHistory((await historyResult.value.json()) as PredictionHistoryPayload);
+      }
+      if (batchStatusResult.status === "fulfilled") {
+        if (batchStatusResult.value.ok) {
+          setBatchStatus((await batchStatusResult.value.json()) as BatchStatusPayload);
+          setBatchStatusError("");
+        } else {
+          setBatchStatusError(await readApiError(batchStatusResult.value, "Batch status is temporarily unavailable."));
         }
-        if (isMounted && historyResponse.ok) {
-          setPredictionHistory((await historyResponse.json()) as PredictionHistoryPayload);
+      } else {
+        setBatchStatusError("Batch status is temporarily unavailable.");
+      }
+      if (analysisResult.status === "fulfilled") {
+        if (analysisResult.value.ok) {
+          setAnalysisSummary((await analysisResult.value.json()) as AnalysisPayload);
+          setAnalysisError("");
+        } else {
+          setAnalysisError(await readApiError(analysisResult.value, "Analysis is temporarily unavailable."));
         }
-        if (isMounted && batchStatusResponse.ok) {
-          setBatchStatus((await batchStatusResponse.json()) as BatchStatusPayload);
-        }
-        if (isMounted && analysisResponse.ok) {
-          setAnalysisSummary((await analysisResponse.json()) as AnalysisPayload);
-        }
-      } catch {
-        // Keep the tabs graceful if the helper feeds are unavailable.
+      } else {
+        setAnalysisError("Analysis is temporarily unavailable.");
       }
     }
     void loadLibraryData();
@@ -397,11 +449,13 @@ export default function Home() {
     try {
       const response = await fetch("/api/analysis", { cache: "no-store" });
       if (!response.ok) {
+        setAnalysisError(await readApiError(response, "Analysis is temporarily unavailable."));
         return;
       }
       setAnalysisSummary((await response.json()) as AnalysisPayload);
+      setAnalysisError("");
     } catch {
-      // Best effort refresh only.
+      setAnalysisError("Analysis is temporarily unavailable.");
     }
   }
 
@@ -411,12 +465,19 @@ export default function Home() {
     async function loadBatchStatus() {
       try {
         const response = await fetch("/api/batch-status", { cache: "no-store" });
-        if (!response.ok || cancelled) {
+        if (cancelled) {
+          return;
+        }
+        if (!response.ok) {
+          setBatchStatusError(await readApiError(response, "Batch status is temporarily unavailable."));
           return;
         }
         setBatchStatus((await response.json()) as BatchStatusPayload);
+        setBatchStatusError("");
       } catch {
-        // Best effort only; the rest of the page can stay live without it.
+        if (!cancelled) {
+          setBatchStatusError("Batch status is temporarily unavailable.");
+        }
       }
     }
 
@@ -435,22 +496,36 @@ export default function Home() {
     async function loadAnalysis() {
       try {
         const response = await fetch("/api/analysis", { cache: "no-store" });
-        if (!response.ok || cancelled) {
+        if (cancelled) {
+          return;
+        }
+        if (!response.ok) {
+          setAnalysisError(await readApiError(response, "Analysis is temporarily unavailable."));
           return;
         }
         setAnalysisSummary((await response.json()) as AnalysisPayload);
+        setAnalysisError("");
       } catch {
-        // Best effort only.
+        if (!cancelled) {
+          setAnalysisError("Analysis is temporarily unavailable.");
+        }
       }
     }
+    void loadAnalysis();
     const timer = window.setInterval(() => {
       void loadAnalysis();
-    }, 30000);
+    }, 15000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
   }, []);
+
+  useEffect(() => {
+    if (activeTab === "analysis") {
+      void refreshAnalysis();
+    }
+  }, [activeTab]);
 
   const historyLookup = useMemo(() => {
     const lookup = new Map<string, PredictionHistoryItem>();
@@ -492,9 +567,26 @@ export default function Home() {
       return "No active staged batch";
     }
     const progressLabel = batchStatus.phase === "predicting"
-      ? `${batchStatus.completed}/${batchStatus.total} predicted`
+      ? `${Math.min(batchStatus.current_index || 0, batchStatus.total || 0)}/${batchStatus.total} active`
       : `${batchStatus.current_index}/${batchStatus.total} downloaded`;
     return `${batchStatus.phase_label} • ${progressLabel}`;
+  }, [batchStatus]);
+
+  const liveBatchStatusText = useMemo(() => {
+    if (batchStatusError && !batchStatus?.has_active_batch) {
+      return "Batch status unavailable";
+    }
+    return liveBatchStatusLine.replace(" • ", " - ");
+  }, [batchStatus?.has_active_batch, batchStatusError, liveBatchStatusLine]);
+
+  const liveBatchEtaText = useMemo(() => {
+    if (!batchStatus?.has_active_batch || batchStatus.phase !== "predicting") {
+      return "";
+    }
+    if (batchStatus.eta_label) {
+      return `ETA ${batchStatus.eta_label}`;
+    }
+    return "";
   }, [batchStatus]);
 
   const sourceAccuracyChartData = useMemo(
@@ -504,6 +596,14 @@ export default function Home() {
 
   const slideTypeChartData = useMemo(
     () => (analysisSummary?.by_slide_type || []).map((item) => ({ ...item, accuracyPercent: Number(((item.accuracy || 0) * 100).toFixed(1)) })),
+    [analysisSummary],
+  );
+
+  const slideTypeOverviewCards = useMemo(
+    () =>
+      (analysisSummary?.by_slide_type || [])
+        .slice()
+        .sort((left, right) => (right.total || 0) - (left.total || 0)),
     [analysisSummary],
   );
 
@@ -1245,60 +1345,66 @@ export default function Home() {
               <h1>MSI detection</h1>
               <p>Fluid MSI detection with real local inference.</p>
             </div>
-            <aside className="hero-status-card">
-              <div className="hero-status-top">
-                <span className={`state-pill ${batchStatus?.has_active_batch ? "state-pill-live" : ""}`}>
-                  {batchStatus?.has_active_batch ? "Batch live" : "Idle"}
-                </span>
-                <strong>{batchStatus?.batch_name || "No staged batch"}</strong>
-              </div>
-              <p>{liveBatchStatusLine}</p>
-              <div className="hero-status-progress">
-                <span style={{ width: `${batchStatus?.has_active_batch ? Math.max(6, batchStatus?.percent || 0) : 0}%` }} />
-              </div>
-              <div className="hero-status-meta">
-                <span>{batchStatus?.percent ?? 0}%</span>
-                <span>{batchStatus?.queued_batches?.length ? `${batchStatus.queued_batches.length} queued` : "No queue"}</span>
-              </div>
-              {batchStatus?.current_file ? (
-                <div className="hero-status-file">{batchStatus.current_file}</div>
-              ) : null}
-            </aside>
           </div>
         </section>
         <section className="surface-tabs glass-card">
-          <button
-            type="button"
-            className={`surface-tab ${activeTab === "predict" ? "active" : ""}`}
-            onClick={() => setActiveTab("predict")}
-          >
-            <ScanSearch size={16} />
-            Predict
-          </button>
-          <button
-            type="button"
-            className={`surface-tab ${activeTab === "storage" ? "active" : ""}`}
-            onClick={() => setActiveTab("storage")}
-          >
-            <Archive size={16} />
-            Storage
-          </button>
-          <button
-            type="button"
-            className={`surface-tab ${activeTab === "history" ? "active" : ""}`}
-            onClick={() => setActiveTab("history")}
-          >
-            <Clock3 size={16} />
-            History
-          </button>
-          <button
-            type="button"
-            className={`surface-tab ${activeTab === "analysis" ? "active" : ""}`}
-            onClick={() => setActiveTab("analysis")}
-          >
-            <BarChart3 size={16} />
-            Analysis
-          </button>
+          <div className="surface-tabs-left">
+            <button
+              type="button"
+              className={`surface-tab ${activeTab === "predict" ? "active" : ""}`}
+              onClick={() => setActiveTab("predict")}
+            >
+              <ScanSearch size={16} />
+              Predict
+            </button>
+            <button
+              type="button"
+              className={`surface-tab ${activeTab === "storage" ? "active" : ""}`}
+              onClick={() => setActiveTab("storage")}
+            >
+              <Archive size={16} />
+              Storage
+            </button>
+            <button
+              type="button"
+              className={`surface-tab ${activeTab === "history" ? "active" : ""}`}
+              onClick={() => setActiveTab("history")}
+            >
+              <Clock3 size={16} />
+              History
+            </button>
+            <button
+              type="button"
+              className={`surface-tab ${activeTab === "analysis" ? "active" : ""}`}
+              onClick={() => setActiveTab("analysis")}
+            >
+              <BarChart3 size={16} />
+              Analysis
+            </button>
+          </div>
+          <aside className="surface-batch-strip">
+            <div className="surface-batch-strip-top">
+              <span className={`state-pill ${batchStatus?.has_active_batch ? "state-pill-live" : ""}`}>
+                {batchStatus?.has_active_batch ? "Batch live" : batchStatusError ? "VM retry" : "Idle"}
+              </span>
+              <strong>{batchStatus?.batch_name || "No staged batch"}</strong>
+            </div>
+            <div className="surface-batch-strip-line">
+              <span>{liveBatchStatusText}</span>
+              <span>{batchStatus?.percent ?? 0}%</span>
+              {liveBatchEtaText ? <span>{liveBatchEtaText}</span> : null}
+              <span>{batchStatus?.queued_batches?.length ? `${batchStatus.queued_batches.length} queued` : "No queue"}</span>
+            </div>
+            <div className="surface-batch-strip-progress">
+              <span style={{ width: `${batchStatus?.has_active_batch ? Math.max(6, batchStatus?.percent || 0) : 0}%` }} />
+            </div>
+            {batchStatusError && !batchStatus?.has_active_batch ? (
+              <div className="surface-batch-strip-note">{batchStatusError}</div>
+            ) : null}
+            {batchStatus?.current_file ? (
+              <div className="surface-batch-strip-file">{batchStatus.current_file}</div>
+            ) : null}
+          </aside>
         </section>
 
         {activeTab === "predict" ? (
@@ -2130,12 +2236,62 @@ export default function Home() {
               <div>
                 <p className="section-kicker">Analysis</p>
                 <h2>Model accuracy and error breakdown</h2>
+                {analysisSummary?.updated_at ? (
+                  <p className="analysis-updated-at">Auto refreshes every 15s. Last update {formatSavedAt(analysisSummary.updated_at)}</p>
+                ) : null}
               </div>
-              <span className="state-pill">{analysisSummary ? `${analysisSummary.overview.total_scored} scored` : "Loading"}</span>
+              <span className="state-pill">
+                {analysisSummary ? `${analysisSummary.overview.total_scored} scored` : analysisError ? "Retry needed" : "Loading"}
+              </span>
             </div>
 
             {analysisSummary ? (
               <div className="analysis-layout">
+                <section className="analysis-panel glass-card">
+                  <div className="technical-panel-header">
+                    <div>
+                      <span className="result-label">By slide type</span>
+                      <h3>Per-type accuracy comes first</h3>
+                    </div>
+                  </div>
+                  <div className="analysis-type-grid">
+                    {slideTypeOverviewCards.map((item) => (
+                      <div key={item.name} className="analysis-type-card">
+                        <div className="analysis-type-card-top">
+                          <strong>{item.name}</strong>
+                          <span>{item.total || 0} tested</span>
+                        </div>
+                        <div className="analysis-type-card-metric">{formatAccuracy(item.accuracy)}</div>
+                        <div className="analysis-type-card-subgrid">
+                          <div>
+                            <span>Correct</span>
+                            <strong>{item.correct || 0}</strong>
+                          </div>
+                          <div>
+                            <span>Wrong</span>
+                            <strong>{item.wrong || 0}</strong>
+                          </div>
+                          <div>
+                            <span>False +</span>
+                            <strong>{item.false_positive || 0}</strong>
+                          </div>
+                          <div>
+                            <span>False -</span>
+                            <strong>{item.false_negative || 0}</strong>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="analysis-panel glass-card">
+                  <div className="technical-panel-header">
+                    <div>
+                      <span className="result-label">Overall</span>
+                      <h3>Pooled accuracy summary</h3>
+                    </div>
+                  </div>
                 <div className="analysis-overview-grid">
                   <div className="runtime-box">
                     <span>Total tested</span>
@@ -2146,22 +2302,15 @@ export default function Home() {
                     <strong>{formatAccuracy(analysisSummary.overview.accuracy)}</strong>
                   </div>
                   <div className="runtime-box">
-                    <span>False positives</span>
+                    <span>False positives (Type I)</span>
                     <strong>{analysisSummary.overview.false_positive}</strong>
                   </div>
                   <div className="runtime-box">
-                    <span>False negatives</span>
+                    <span>False negatives (Type II)</span>
                     <strong>{analysisSummary.overview.false_negative}</strong>
                   </div>
-                  <div className="runtime-box">
-                    <span>Type I error</span>
-                    <strong>{analysisSummary.overview.type_i_error}</strong>
-                  </div>
-                  <div className="runtime-box">
-                    <span>Type II error</span>
-                    <strong>{analysisSummary.overview.type_ii_error}</strong>
-                  </div>
                 </div>
+                </section>
 
                 <div className="analysis-chart-grid">
                   <section className="analysis-panel glass-card">
@@ -2313,7 +2462,7 @@ export default function Home() {
                       </div>
                     </div>
                     <div className="checkpoint-table-wrap">
-                      <table className="checkpoint-table">
+                      <table className="checkpoint-table analysis-contrast-table analysis-queue-table">
                         <thead>
                           <tr>
                             <th>Batch</th>
@@ -2342,12 +2491,58 @@ export default function Home() {
                 <section className="analysis-panel glass-card">
                   <div className="technical-panel-header">
                     <div>
-                      <span className="result-label">Recent wrong cases</span>
-                      <h3>False-positive / false-negative list</h3>
+                      <span className="result-label">Latest validated results</span>
+                      <h3>Complete Results Table</h3>
                     </div>
                   </div>
                   <div className="checkpoint-table-wrap">
-                    <table className="checkpoint-table">
+                    <table className="checkpoint-table analysis-wrong-table analysis-contrast-table">
+                      <thead>
+                        <tr>
+                          <th>Approach</th>
+                          <th>Extractor used</th>
+                          <th>AUROC</th>
+                          <th>F1 macro</th>
+                          <th>AUPRC</th>
+                          <th>Bal Acc</th>
+                          <th>MSI-H Recall</th>
+                          <th>Specificity</th>
+                          <th>Threshold</th>
+                          <th>State</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {analysisSummary.reference_models.map((item) => (
+                          <tr key={`${item.name}-${item.extractor}`}>
+                            <td>{item.name}</td>
+                            <td>{item.extractor}</td>
+                            <td>{typeof item.auroc === "number" ? item.auroc.toFixed(4) : "-"}</td>
+                            <td>{typeof item.f1_macro === "number" ? item.f1_macro.toFixed(4) : "-"}</td>
+                            <td>{typeof item.auprc === "number" ? item.auprc.toFixed(4) : "-"}</td>
+                            <td>{typeof item.balanced_accuracy === "number" ? item.balanced_accuracy.toFixed(4) : "-"}</td>
+                            <td>{typeof item.msi_h_recall === "number" ? item.msi_h_recall.toFixed(4) : "-"}</td>
+                            <td>{typeof item.specificity === "number" ? item.specificity.toFixed(4) : "-"}</td>
+                            <td>{typeof item.best_threshold === "number" ? `${(item.best_threshold * 100).toFixed(2)}%` : "-"}</td>
+                            <td>{item.state || "-"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+
+                <section className="analysis-panel glass-card">
+                  <div className="technical-panel-header">
+                    <div>
+                      <span className="result-label">All false cases</span>
+                      <h3>False-positive / false-negative list</h3>
+                    </div>
+                    <div className="tech-badges">
+                      <span>{analysisSummary.recent_wrong_cases.length} total false cases</span>
+                    </div>
+                  </div>
+                  <div className="checkpoint-table-wrap analysis-false-case-wrap">
+                    <table className="checkpoint-table analysis-wrong-table analysis-contrast-table">
                       <thead>
                         <tr>
                           <th>Patient</th>
@@ -2380,7 +2575,12 @@ export default function Home() {
               </div>
             ) : (
               <div className="result-placeholder history-empty">
-                <p>Analysis is loading from the saved History and current batch runtime.</p>
+                <p>{analysisError || "Analysis is loading from the saved History and current batch runtime."}</p>
+                {analysisError ? (
+                  <button type="button" className="history-open-button analysis-retry-button" onClick={() => void refreshAnalysis()}>
+                    Retry analysis
+                  </button>
+                ) : null}
               </div>
             )}
           </section>
