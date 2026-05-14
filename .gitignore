@@ -10,9 +10,24 @@ msi-h/downloads/
 
 db.sqlite3
 *.log
+*.pid
 
 staticfiles/
 media/
 
 cleaned_msi_source.tgz
 cleaned_msi_source_v2.tgz
+
+# Local frontend build artifacts
+apps/web/.next/
+apps/web/node_modules/
+apps/web/next-env.d.ts
+
+# Large local experiment and runtime artifacts
+drive/
+eraya/
+graphs/
+models/
+outputs/
+runtime/
+virchow2_repro_bundle/
