@@ -51,6 +51,9 @@ class LocalDirVisionEncoder(nn.Module):
             raise RuntimeError(f"Unexpected encoder output shape: {tuple(features.shape)}")
         cls_token = features[:, 0]
         patch_tokens = features[:, self.patch_token_offset :] if features.shape[1] > self.patch_token_offset else features[:, 1:]
+        if self.pool == "spatial_mean":
+            spatial_tokens = patch_tokens if patch_tokens.numel() else features
+            return spatial_tokens.mean(dim=1)
         if patch_tokens.numel() == 0 or self.pool == "cls":
             return cls_token
         patch_mean = patch_tokens.mean(dim=1)

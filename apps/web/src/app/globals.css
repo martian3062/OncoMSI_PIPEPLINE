@@ -626,6 +626,101 @@ input {
   height: 260px;
 }
 
+.parallel-badge-row {
+  margin-top: 14px;
+  flex-wrap: wrap;
+}
+
+.parallel-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.parallel-profile-card {
+  padding: 18px;
+  border-radius: 22px;
+  background: #ffffff;
+  border: 1px solid rgba(86, 184, 246, 0.18);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+.parallel-profile-card.best {
+  border-color: rgba(255, 159, 110, 0.5);
+  box-shadow:
+    0 0 0 3px rgba(255, 159, 110, 0.12),
+    inset 0 1px 0 rgba(255, 255, 255, 0.82);
+}
+
+.parallel-profile-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: flex-start;
+}
+
+.parallel-profile-top strong {
+  display: block;
+  color: var(--deep);
+  font-size: 18px;
+  line-height: 1.3;
+}
+
+.parallel-profile-top span {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.parallel-profile-state {
+  padding: 8px 10px;
+  border-radius: 999px;
+  background: rgba(86, 184, 246, 0.12);
+  color: var(--deep);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.parallel-profile-card.best .parallel-profile-state {
+  background: rgba(255, 159, 110, 0.16);
+  color: #9f4e18;
+}
+
+.parallel-profile-metric {
+  margin-top: 14px;
+  color: #1c7b69;
+  font-size: 34px;
+  font-weight: 800;
+}
+
+.parallel-profile-subgrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.parallel-profile-subgrid span {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.parallel-profile-subgrid strong {
+  display: block;
+  margin-top: 5px;
+  color: var(--deep);
+  font-size: 18px;
+}
+
 .storage-layout {
   display: grid;
   grid-template-columns: minmax(320px, 380px) minmax(0, 1fr);
@@ -1624,7 +1719,8 @@ input {
   .analysis-type-grid,
   .analysis-overview-grid,
   .history-summary-grid,
-  .history-metrics {
+  .history-metrics,
+  .parallel-profile-grid {
     grid-template-columns: 1fr;
   }
 

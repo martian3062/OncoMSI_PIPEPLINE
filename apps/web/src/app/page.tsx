@@ -5,8 +5,8 @@ export const dynamic = "force-dynamic";
 import { FormEvent, useEffect, useMemo, useRef, useState, startTransition } from "react";
 import { AlertCircle, Archive, BarChart3, Clock3, Cpu, HardDrive, LoaderCircle, MemoryStick, ScanSearch, Sparkles, Upload } from "lucide-react";
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Pie, PieChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { DeepZoomViewer } from "@/components/deep-zoom-viewer";
-import { FluidBackground } from "@/components/fluid-background";
+import { DeepZoomViewer } from "../components/deep-zoom-viewer";
+import { FluidBackground } from "../components/fluid-background";
 
 type CheckpointTrace = {
   checkpoint: string;
@@ -245,6 +245,48 @@ type AnalysisPayload = {
     available_checkpoints?: number;
     mean_threshold?: number;
   };
+  parallel_bundle: {
+    bundle_id?: string;
+    execution_mode?: string;
+    requested_extractors?: string[];
+    selected_slide_limit?: number;
+    matched_slide_count?: number;
+    best_approach?: string;
+  };
+  parallel_profiles: Array<{
+    approach_label: string;
+    extractor: string;
+    mil_model: string;
+    extractor_backend: string;
+    experiment_id: string;
+    accuracy: number;
+    total_cases: number;
+    correct: number;
+    false_positive: number;
+    false_negative: number;
+    tp: number;
+    tn: number;
+    mean_auroc?: number | null;
+    mean_f1_macro?: number | null;
+    mean_auprc?: number | null;
+    mean_balanced_accuracy?: number | null;
+    mean_recall_msi_h?: number | null;
+    mean_specificity?: number | null;
+    mean_best_threshold?: number | null;
+    available_bag_slide_count: number;
+    selected_slide_limit: number;
+    matched_slide_count: number;
+    repeat_count: number;
+    fold_count: number;
+    tile_count: number;
+    tile_px: number;
+    tile_um: number;
+    learning_rate?: number | null;
+    mil_batch_size: number;
+    weight_decay?: number | null;
+    is_best: boolean;
+    state: string;
+  }>;
   reference_models: Array<{
     name: string;
     extractor: string;
@@ -326,7 +368,7 @@ export default function Home() {
   const [batchStatus, setBatchStatus] = useState<BatchStatusPayload | null>(null);
   const [selectedStorageDetail, setSelectedStorageDetail] = useState<StorageSampleDetail | null>(null);
   const [job, setJob] = useState<PredictJobStatus | null>(null);
-  const [activeTab, setActiveTab] = useState<"predict" | "storage" | "history" | "analysis">("predict");
+  const [activeTab, setActiveTab] = useState<"predict" | "storage" | "history" | "analysis" | "parallel">("predict");
   const [predictMode, setPredictMode] = useState<"exact" | "fast">(() => {
     if (typeof window === "undefined") {
       return "exact";
@@ -522,7 +564,7 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    if (activeTab === "analysis") {
+    if (activeTab === "analysis" || activeTab === "parallel") {
       void refreshAnalysis();
     }
   }, [activeTab]);
@@ -605,6 +647,24 @@ export default function Home() {
         .slice()
         .sort((left, right) => (right.total || 0) - (left.total || 0)),
     [analysisSummary],
+  );
+
+  const parallelProfiles = useMemo(
+    () =>
+      (analysisSummary?.parallel_profiles || [])
+        .slice()
+        .sort((left, right) => (right.mean_auroc || 0) - (left.mean_auroc || 0)),
+    [analysisSummary],
+  );
+
+  const parallelAccuracyChartData = useMemo(
+    () =>
+      parallelProfiles.map((item) => ({
+        name: item.approach_label.replace("Approach", "A"),
+        fullName: item.approach_label,
+        accuracyPercent: Number(((item.accuracy || 0) * 100).toFixed(1)),
+      })),
+    [parallelProfiles],
   );
 
   function historyKeyFor(item: PredictionHistoryItem) {
@@ -1380,6 +1440,14 @@ export default function Home() {
             >
               <BarChart3 size={16} />
               Analysis
+            </button>
+            <button
+              type="button"
+              className={`surface-tab ${activeTab === "parallel" ? "active" : ""}`}
+              onClick={() => setActiveTab("parallel")}
+            >
+              <Sparkles size={16} />
+              New Parallel
             </button>
           </div>
           <aside className="surface-batch-strip">
@@ -2522,7 +2590,7 @@ export default function Home() {
                             <td>{typeof item.balanced_accuracy === "number" ? item.balanced_accuracy.toFixed(4) : "-"}</td>
                             <td>{typeof item.msi_h_recall === "number" ? item.msi_h_recall.toFixed(4) : "-"}</td>
                             <td>{typeof item.specificity === "number" ? item.specificity.toFixed(4) : "-"}</td>
-                            <td>{typeof item.best_threshold === "number" ? `${(item.best_threshold * 100).toFixed(2)}%` : "-"}</td>
+                            <td>{typeof item.best_threshold === "number" ? item.best_threshold.toFixed(4) : "-"}</td>
                             <td>{item.state || "-"}</td>
                           </tr>
                         ))}
@@ -2581,6 +2649,197 @@ export default function Home() {
                     Retry analysis
                   </button>
                 ) : null}
+              </div>
+            )}
+          </section>
+        ) : null}
+
+        {activeTab === "parallel" ? (
+          <section className="library-card glass-card">
+            <div className="section-top">
+              <div>
+                <p className="section-kicker">New Parallel</p>
+                <h2>Top-4 preserved build</h2>
+                {analysisSummary?.updated_at ? (
+                  <p className="analysis-updated-at">Uses the preserved validated bundle plus live analysis refresh. Last update {formatSavedAt(analysisSummary.updated_at)}</p>
+                ) : null}
+              </div>
+              <span className="state-pill">
+                {analysisSummary?.parallel_bundle?.bundle_id || "Bundle loading"}
+              </span>
+            </div>
+
+            {analysisSummary ? (
+              <div className="analysis-layout">
+                <section className="analysis-panel glass-card">
+                  <div className="technical-panel-header">
+                    <div>
+                      <span className="result-label">Bundle overview</span>
+                      <h3>Validated parallel lineup</h3>
+                    </div>
+                  </div>
+                  <div className="analysis-overview-grid">
+                    <div className="runtime-box">
+                      <span>Execution mode</span>
+                      <strong>{analysisSummary.parallel_bundle.execution_mode || "-"}</strong>
+                    </div>
+                    <div className="runtime-box">
+                      <span>Best approach</span>
+                      <strong>{analysisSummary.parallel_bundle.best_approach || "-"}</strong>
+                    </div>
+                    <div className="runtime-box">
+                      <span>Matched slides</span>
+                      <strong>{analysisSummary.parallel_bundle.matched_slide_count || 0}</strong>
+                    </div>
+                    <div className="runtime-box">
+                      <span>Selected limit</span>
+                      <strong>{analysisSummary.parallel_bundle.selected_slide_limit || 0}</strong>
+                    </div>
+                  </div>
+                  <div className="tech-badges parallel-badge-row">
+                    {(analysisSummary.parallel_bundle.requested_extractors || []).map((item) => (
+                      <span key={item}>{item}</span>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="analysis-panel glass-card">
+                  <div className="technical-panel-header">
+                    <div>
+                      <span className="result-label">Approach cards</span>
+                      <h3>Four preserved models</h3>
+                    </div>
+                  </div>
+                  <div className="parallel-profile-grid">
+                    {parallelProfiles.map((item) => (
+                      <div key={item.approach_label} className={`parallel-profile-card ${item.is_best ? "best" : ""}`}>
+                        <div className="parallel-profile-top">
+                          <div>
+                            <strong>{item.approach_label}</strong>
+                            <span>{item.extractor}</span>
+                          </div>
+                          <span className="parallel-profile-state">{item.is_best ? "Best" : item.state}</span>
+                        </div>
+                        <div className="parallel-profile-metric">{formatAccuracy(item.accuracy)}</div>
+                        <div className="parallel-profile-subgrid">
+                          <div>
+                            <span>AUROC</span>
+                            <strong>{typeof item.mean_auroc === "number" ? item.mean_auroc.toFixed(4) : "-"}</strong>
+                          </div>
+                          <div>
+                            <span>Threshold</span>
+                            <strong>{typeof item.mean_best_threshold === "number" ? item.mean_best_threshold.toFixed(4) : "-"}</strong>
+                          </div>
+                          <div>
+                            <span>False +</span>
+                            <strong>{item.false_positive}</strong>
+                          </div>
+                          <div>
+                            <span>False -</span>
+                            <strong>{item.false_negative}</strong>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+
+                <div className="analysis-chart-grid">
+                  <section className="analysis-panel glass-card">
+                    <div className="technical-panel-header">
+                      <div>
+                        <span className="result-label">Accuracy</span>
+                        <h3>Validated accuracy by approach</h3>
+                      </div>
+                    </div>
+                    <div className="analysis-chart">
+                      <ResponsiveContainer width="100%" height={260}>
+                        <BarChart data={parallelAccuracyChartData}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(120,150,172,0.18)" />
+                          <XAxis dataKey="name" />
+                          <YAxis domain={[0, 100]} tickFormatter={(value) => `${value}%`} />
+                          <Tooltip formatter={(value) => `${value ?? 0}%`} labelFormatter={(_, payload) => payload?.[0]?.payload?.fullName || ""} />
+                          <Bar dataKey="accuracyPercent" name="Accuracy" radius={[8, 8, 0, 0]}>
+                            {parallelAccuracyChartData.map((item) => (
+                              <Cell key={item.fullName} fill={analysisSummary.parallel_bundle.best_approach === item.fullName ? "#ff9f6e" : "#4f9cff"} />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </section>
+
+                  <section className="analysis-panel glass-card">
+                    <div className="technical-panel-header">
+                      <div>
+                        <span className="result-label">Why this helps</span>
+                        <h3>Parallel follow-up signal</h3>
+                      </div>
+                    </div>
+                    <div className="explain-list">
+                      <div className="explain-item">The current live serving model can drift badly on BS1, DX1, and mixed holdout batches, so this tab keeps the cleaner validated top-4 bundle separate from noisy saved-history inference.</div>
+                      <div className="explain-item">Virchow2 is the best preserved validated approach in this bundle, but UNI2-h, H-optimus-0, and Midnight stay visible here so we can compare false positives, recall, and threshold behavior before switching live serving.</div>
+                      <div className="explain-item">All four use TransMIL with the same slide-selection regime, which makes threshold, AUROC, and false-positive comparisons more trustworthy than mixing unrelated historical runs.</div>
+                    </div>
+                  </section>
+                </div>
+
+                <section className="analysis-panel glass-card">
+                  <div className="technical-panel-header">
+                    <div>
+                      <span className="result-label">Validated approaches</span>
+                      <h3>Metrics and training settings</h3>
+                    </div>
+                  </div>
+                  <div className="checkpoint-table-wrap">
+                    <table className="checkpoint-table analysis-wrong-table analysis-contrast-table">
+                      <thead>
+                        <tr>
+                          <th>Approach</th>
+                          <th>Extractor</th>
+                          <th>Accuracy</th>
+                          <th>AUROC</th>
+                          <th>F1 macro</th>
+                          <th>AUPRC</th>
+                          <th>Bal Acc</th>
+                          <th>Recall</th>
+                          <th>Specificity</th>
+                          <th>Threshold</th>
+                          <th>FP</th>
+                          <th>FN</th>
+                          <th>LR</th>
+                          <th>Batch</th>
+                          <th>Tiles</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {parallelProfiles.map((item) => (
+                          <tr key={item.approach_label}>
+                            <td>{item.approach_label}</td>
+                            <td>{item.extractor}</td>
+                            <td>{formatAccuracy(item.accuracy)}</td>
+                            <td>{typeof item.mean_auroc === "number" ? item.mean_auroc.toFixed(4) : "-"}</td>
+                            <td>{typeof item.mean_f1_macro === "number" ? item.mean_f1_macro.toFixed(4) : "-"}</td>
+                            <td>{typeof item.mean_auprc === "number" ? item.mean_auprc.toFixed(4) : "-"}</td>
+                            <td>{typeof item.mean_balanced_accuracy === "number" ? item.mean_balanced_accuracy.toFixed(4) : "-"}</td>
+                            <td>{typeof item.mean_recall_msi_h === "number" ? item.mean_recall_msi_h.toFixed(4) : "-"}</td>
+                            <td>{typeof item.mean_specificity === "number" ? item.mean_specificity.toFixed(4) : "-"}</td>
+                            <td>{typeof item.mean_best_threshold === "number" ? item.mean_best_threshold.toFixed(4) : "-"}</td>
+                            <td>{item.false_positive}</td>
+                            <td>{item.false_negative}</td>
+                            <td>{typeof item.learning_rate === "number" ? item.learning_rate.toExponential(1) : "-"}</td>
+                            <td>{item.mil_batch_size || "-"}</td>
+                            <td>{item.tile_count ? `${item.tile_count} @ ${item.tile_px}px / ${item.tile_um}um` : "-"}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </section>
+              </div>
+            ) : (
+              <div className="result-placeholder history-empty">
+                <p>{analysisError || "Parallel bundle details are loading."}</p>
               </div>
             )}
           </section>

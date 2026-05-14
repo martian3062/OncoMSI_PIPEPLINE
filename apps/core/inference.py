@@ -29,7 +29,7 @@ import tifffile
 from local_encoder_package import EncoderPackageError, load_encoder_package
 
 
-FEATURE_DIM = 2560
+DEFAULT_FEATURE_DIM = 2560
 LATENT_DIM = 512
 ENSEMBLE_SIZE = 8
 MAX_CHECKPOINTS_PER_REPEAT = 2
@@ -122,7 +122,7 @@ class PPEG(nn.Module):
 
 
 class TransMIL(nn.Module):
-    def __init__(self, input_dim: int = FEATURE_DIM, n_classes: int = 2):
+    def __init__(self, input_dim: int = DEFAULT_FEATURE_DIM, n_classes: int = 2):
         super().__init__()
         self.pos_layer = PPEG(dim=LATENT_DIM)
         self._fc1 = nn.Sequential(nn.Linear(input_dim, LATENT_DIM), nn.ReLU())
@@ -180,6 +180,13 @@ def _default_encoder_dir() -> Path:
     if student_dir.exists():
         return student_dir
     return base_dir / "models" / "virchow2"
+
+
+def _feature_dim() -> int:
+    try:
+        return int(_current_encoder_metadata().get("embedding_dim") or DEFAULT_FEATURE_DIM)
+    except Exception:
+        return DEFAULT_FEATURE_DIM
 
 
 def _pipeline_mode() -> str:
@@ -464,7 +471,7 @@ def get_inference_metadata() -> dict[str, Any]:
             "package_dir": str(_default_encoder_dir()),
             "encoder_label": "unavailable",
             "encoder_type": "",
-            "embedding_dim": FEATURE_DIM,
+            "embedding_dim": DEFAULT_FEATURE_DIM,
             "tile_count": DEFAULT_TILE_COUNT,
             "backbone_name": "",
         }
@@ -480,9 +487,13 @@ def get_inference_metadata() -> dict[str, Any]:
     )
     return {
         "bundle_root": str(_bundle_root()),
-        "approach_label": "Approach2-Virchow2",
+        "approach_label": str(
+            _bundle_metrics().get("approach_label")
+            or _bundle_metrics().get("resolved_approach_label")
+            or "Preserved bundle"
+        ),
         "mil_model": "TransMIL",
-        "feature_dim": FEATURE_DIM,
+        "feature_dim": _feature_dim(),
         "available_checkpoints": len(list(_checkpoint_dir().glob("repeat_*_fold_*_best_valid.pth"))),
         "selected_checkpoint_count": len(checkpoints),
         "selected_repeats": sorted({item.repeat for item in checkpoints}),
@@ -561,8 +572,9 @@ def load_feature_bag(upload_path: Path) -> torch.Tensor:
         features = features.unsqueeze(0)
     if features.dim() != 2:
         raise ValueError(f"Expected a 2D feature bag, got shape {tuple(features.shape)}.")
-    if features.shape[-1] != FEATURE_DIM:
-        raise ValueError(f"Expected feature dimension {FEATURE_DIM}, got {features.shape[-1]}.")
+    expected_feature_dim = _feature_dim()
+    if features.shape[-1] != expected_feature_dim:
+        raise ValueError(f"Expected feature dimension {expected_feature_dim}, got {features.shape[-1]}.")
     if features.shape[0] < 1:
         raise ValueError("The uploaded feature bag is empty.")
     return features.float()
@@ -1124,7 +1136,7 @@ def _load_ensemble_models(mode: str | None = None) -> tuple[tuple[EnsembleCheckp
     device = _device()
     with temporary_pipeline_mode(mode):
         for item in _active_ensemble_checkpoints():
-            model = TransMIL()
+            model = TransMIL(input_dim=_feature_dim())
             state_dict = torch.load(item.checkpoint_path, map_location="cpu", weights_only=False)
             model.load_state_dict(state_dict, strict=True)
             model.to(device)

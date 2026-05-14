@@ -612,6 +612,94 @@ def _reference_models_from_readme() -> list[dict[str, Any]]:
     ]
 
 
+def _parallel_bundle_root() -> Path:
+    return Path(settings.BASE_DIR) / "eraya" / "latest_approach_virchow2"
+
+
+def _read_json_file(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _parallel_profiles_payload() -> dict[str, Any]:
+    bundle_root = _parallel_bundle_root()
+    bundle_config = _read_json_file(bundle_root / "bundle_config.json")
+    final_summary = _read_json_file(bundle_root / "final_summary.json")
+    prepared_bundle = _read_json_file(bundle_root / "prepared_bundle.json")
+
+    request_payload = bundle_config.get("request") or {}
+    specs = bundle_config.get("specs") or []
+    approaches = final_summary.get("approaches") or {}
+    best_approach = str(final_summary.get("best_approach") or "").strip()
+
+    profiles: list[dict[str, Any]] = []
+    for spec in specs:
+        if not isinstance(spec, dict):
+            continue
+        label = str(spec.get("approach_label") or "").strip()
+        if not label:
+            continue
+        summary = approaches.get(label) or {}
+        confusion = summary.get("aggregate_confusion_matrix") or {}
+        tp = int(confusion.get("tp") or 0)
+        tn = int(confusion.get("tn") or 0)
+        fp = int(confusion.get("fp") or 0)
+        fn = int(confusion.get("fn") or 0)
+        total_cases = tp + tn + fp + fn
+        correct = tp + tn
+        profiles.append(
+            {
+                "approach_label": label,
+                "extractor": str(summary.get("resolved_feature_extractor_used") or summary.get("feature_extractor_used") or spec.get("feature_extractor") or "").strip(),
+                "mil_model": str(spec.get("mil_model") or "").strip(),
+                "extractor_backend": str(spec.get("extractor_backend") or "").strip(),
+                "experiment_id": str(summary.get("experiment_id") or spec.get("experiment_id") or "").strip(),
+                "accuracy": round((correct / total_cases) if total_cases else 0.0, 4),
+                "total_cases": total_cases,
+                "correct": correct,
+                "false_positive": fp,
+                "false_negative": fn,
+                "tp": tp,
+                "tn": tn,
+                "mean_auroc": _safe_float(summary.get("mean_auroc")),
+                "mean_f1_macro": _safe_float(summary.get("mean_f1_macro")),
+                "mean_auprc": _safe_float(summary.get("mean_auprc")),
+                "mean_balanced_accuracy": _safe_float(summary.get("mean_balanced_accuracy")),
+                "mean_recall_msi_h": _safe_float(summary.get("mean_recall_msi_h")),
+                "mean_specificity": _safe_float(summary.get("mean_specificity")),
+                "mean_best_threshold": _safe_float(summary.get("mean_best_threshold")),
+                "available_bag_slide_count": int(summary.get("available_bag_slide_count") or 0),
+                "selected_slide_limit": int(prepared_bundle.get("selected_slide_limit") or request_payload.get("slide_limit") or 0),
+                "matched_slide_count": int(prepared_bundle.get("matched_slide_count") or 0),
+                "repeat_count": int(spec.get("n_repeats") or request_payload.get("n_repeats") or 0),
+                "fold_count": int(spec.get("n_folds") or request_payload.get("n_folds") or 0),
+                "tile_count": int(spec.get("max_tiles_per_slide") or request_payload.get("max_tiles_per_slide") or 0),
+                "tile_px": int(spec.get("tile_px") or request_payload.get("tile_px") or 0),
+                "tile_um": int(spec.get("tile_um") or request_payload.get("tile_um") or 0),
+                "learning_rate": _safe_float(spec.get("learning_rate")),
+                "mil_batch_size": int(spec.get("mil_batch_size") or 0),
+                "weight_decay": _safe_float(spec.get("weight_decay")),
+                "is_best": label == best_approach,
+                "state": "validated",
+            }
+        )
+
+    return {
+        "bundle_id": str(bundle_config.get("bundle_id") or "").strip(),
+        "execution_mode": str(request_payload.get("approach_execution_mode") or "").strip(),
+        "requested_extractors": [str(item).strip() for item in str(request_payload.get("feature_extractor") or "").split(",") if str(item).strip()],
+        "selected_slide_limit": int(prepared_bundle.get("selected_slide_limit") or request_payload.get("slide_limit") or 0),
+        "matched_slide_count": int(prepared_bundle.get("matched_slide_count") or 0),
+        "best_approach": best_approach,
+        "profiles": profiles,
+    }
+
+
 def _history_analysis_payload() -> dict[str, Any]:
     rows = load_prediction_history(limit=None)
     scored_rows = [
@@ -722,6 +810,7 @@ def _history_analysis_payload() -> dict[str, Any]:
         )
     recent_wrong.sort(key=lambda item: str(item.get("saved_at") or ""), reverse=True)
     inference_meta = get_inference_metadata()
+    parallel_payload = _parallel_profiles_payload()
     return {
         "overview": {
             "total_scored": total,
@@ -760,6 +849,15 @@ def _history_analysis_payload() -> dict[str, Any]:
             "available_checkpoints": inference_meta.get("available_checkpoints"),
             "mean_threshold": inference_meta.get("mean_threshold"),
         },
+        "parallel_bundle": {
+            "bundle_id": parallel_payload.get("bundle_id"),
+            "execution_mode": parallel_payload.get("execution_mode"),
+            "requested_extractors": parallel_payload.get("requested_extractors"),
+            "selected_slide_limit": parallel_payload.get("selected_slide_limit"),
+            "matched_slide_count": parallel_payload.get("matched_slide_count"),
+            "best_approach": parallel_payload.get("best_approach"),
+        },
+        "parallel_profiles": parallel_payload.get("profiles") or [],
         "reference_models": _reference_models_from_readme(),
         "recent_wrong_cases": recent_wrong,
         "updated_at": timezone.now().isoformat(),
