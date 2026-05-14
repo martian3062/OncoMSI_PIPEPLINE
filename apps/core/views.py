@@ -1718,8 +1718,8 @@ def _requested_predict_mode(request: HttpRequest) -> str:
         or request.headers.get("X-Predict-Mode")
         or ""
     ).strip().lower()
-    if raw == "fast":
-        return "manager2"
+    if raw == "parallel":
+        return "parallel"
     return "manager1"
 
 

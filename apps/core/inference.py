@@ -42,6 +42,7 @@ FEATURE_KEYS = ("features", "feats", "embeddings", "x", "bag", "data")
 
 MANAGER1_MODE = "manager1"
 MANAGER2_MODE = "manager2"
+PARALLEL_MODE = "parallel"
 ProgressCallback = Any
 _PIPELINE_OVERRIDE = threading.local()
 
@@ -57,6 +58,23 @@ class EnsembleCheckpoint:
     f1_macro: float
     auprc: float
     balanced_accuracy: float
+    approach_label: str = ""
+    extractor: str = ""
+
+
+@dataclass(frozen=True)
+class ParallelApproachSpec:
+    approach_label: str
+    extractor: str
+    checkpoint_dir: Path
+    fold_metrics_path: Path
+    feature_dim: int
+    quality_weight: float
+    mean_auroc: float
+    mean_f1_macro: float
+    mean_auprc: float
+    mean_balanced_accuracy: float
+    mean_best_threshold: float
 
 
 @dataclass(frozen=True)
@@ -159,6 +177,21 @@ def _bundle_root() -> Path:
     return Path(__file__).resolve().parents[2] / "eraya" / "latest_approach_virchow2"
 
 
+def _read_json_payload(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def _parallel_source_root() -> Path:
+    base_dir = Path(settings.BASE_DIR) if settings.configured else Path(__file__).resolve().parents[2]
+    return base_dir / "eraya" / "latest_approach_virchow2"
+
+
 def _historical_bundle_config_path() -> Path:
     root = _bundle_root()
     candidates = [
@@ -191,16 +224,22 @@ def _feature_dim() -> int:
 
 def _pipeline_mode() -> str:
     override = str(getattr(_PIPELINE_OVERRIDE, "mode", "") or "").strip().lower()
-    if override in {MANAGER1_MODE, MANAGER2_MODE}:
-        return override
-    raw_value = str(getattr(settings, "MSI_PIPELINE_MODE", MANAGER2_MODE) or MANAGER2_MODE).strip().lower()
-    if raw_value not in {MANAGER1_MODE, MANAGER2_MODE}:
-        return MANAGER2_MODE
-    return raw_value
+    if override == PARALLEL_MODE:
+        return PARALLEL_MODE
+    if override == MANAGER1_MODE:
+        return MANAGER1_MODE
+    raw_value = str(getattr(settings, "MSI_PIPELINE_MODE", MANAGER1_MODE) or MANAGER1_MODE).strip().lower()
+    if raw_value == PARALLEL_MODE:
+        return PARALLEL_MODE
+    return MANAGER1_MODE
 
 
 def _is_manager1_mode() -> bool:
     return _pipeline_mode() == MANAGER1_MODE
+
+
+def _is_parallel_mode() -> bool:
+    return _pipeline_mode() == PARALLEL_MODE
 
 
 def _fold_metrics_path() -> Path:
@@ -305,6 +344,121 @@ def _bundle_metrics_path() -> Path:
     return candidates[0]
 
 
+def _parallel_bundle_id() -> str:
+    bundle_config = _read_json_payload(_parallel_source_root() / "bundle_config.json")
+    return str(bundle_config.get("bundle_id") or "").strip() or "run-65512be1f9c4"
+
+
+def _parallel_export_root() -> Path:
+    return (Path(settings.BASE_DIR) if settings.configured else Path(__file__).resolve().parents[2]) / "eraya" / f"{_parallel_bundle_id()}_eraya_export"
+
+
+def _parallel_flat_checkpoint_root() -> Path:
+    return (Path(settings.BASE_DIR) if settings.configured else Path(__file__).resolve().parents[2]) / "eraya" / f"{_parallel_bundle_id()}_flat_pth"
+
+
+def _normalize_key(value: str) -> str:
+    return "".join(ch for ch in str(value).lower() if ch.isalnum())
+
+
+def _slug_label(value: str) -> str:
+    return "".join(ch.lower() if ch.isalnum() else "-" for ch in str(value)).strip("-")
+
+
+def _parallel_quality_score(payload: dict[str, Any]) -> float:
+    return (
+        float(payload.get("mean_auroc") or 0.0) * 0.45
+        + float(payload.get("mean_f1_macro") or 0.0) * 0.30
+        + float(payload.get("mean_auprc") or 0.0) * 0.20
+        + float(payload.get("mean_balanced_accuracy") or 0.0) * 0.10
+        - float(payload.get("mean_brier_score") or 0.0) * 0.05
+    )
+
+
+def _feature_dim_from_checkpoint_dir(checkpoint_dir: Path) -> int:
+    first_checkpoint = next(checkpoint_dir.glob("repeat_*_fold_*_best_valid.pth"), None)
+    if first_checkpoint is None:
+        raise FileNotFoundError(f"No preserved checkpoints were found in {checkpoint_dir}.")
+    state_dict = torch.load(first_checkpoint, map_location="cpu", weights_only=False)
+    weight = state_dict.get("_fc1.0.weight")
+    if weight is None or getattr(weight, "shape", None) is None or len(weight.shape) != 2:
+        raise ValueError(f"Could not infer feature dimension from {first_checkpoint}.")
+    return int(weight.shape[1])
+
+
+@lru_cache(maxsize=1)
+def _parallel_aggregate_summary() -> dict[str, Any]:
+    root = _parallel_source_root()
+    candidates = [
+        root / "top4_montecarlo_aggregate.json",
+        _parallel_export_root() / "top4_montecarlo_aggregate.json",
+    ]
+    for candidate in candidates:
+        payload = _read_json_payload(candidate)
+        if payload:
+            return payload
+    return {}
+
+
+@lru_cache(maxsize=1)
+def _parallel_bundle_summary() -> dict[str, Any]:
+    root = _parallel_source_root()
+    candidates = [
+        _parallel_export_root() / "final_summary.json",
+        root / "final_summary.json",
+    ]
+    for candidate in candidates:
+        payload = _read_json_payload(candidate)
+        if payload:
+            return payload
+    return {}
+
+
+@lru_cache(maxsize=1)
+def _parallel_bundle_config() -> dict[str, Any]:
+    return _read_json_payload(_parallel_source_root() / "bundle_config.json")
+
+
+@lru_cache(maxsize=1)
+def _parallel_approach_specs() -> tuple[ParallelApproachSpec, ...]:
+    bundle_config = _parallel_bundle_config()
+    final_summary = _parallel_bundle_summary()
+    aggregate = _parallel_aggregate_summary()
+    summary_lookup = final_summary.get("approaches") or {}
+    aggregate_lookup = {
+        str(item.get("approach_label") or "").strip(): item
+        for item in (aggregate.get("approaches") or [])
+        if isinstance(item, dict)
+    }
+    specs: list[ParallelApproachSpec] = []
+    for raw_spec in bundle_config.get("specs") or []:
+        if not isinstance(raw_spec, dict):
+            continue
+        approach_label = str(raw_spec.get("approach_label") or "").strip()
+        extractor = str(raw_spec.get("feature_extractor") or "").strip()
+        if not approach_label or not extractor:
+            continue
+        summary_payload = summary_lookup.get(approach_label) or aggregate_lookup.get(approach_label) or {}
+        checkpoint_dir = _parallel_flat_checkpoint_root() / _slug_label(approach_label)
+        fold_metrics_path = _parallel_export_root() / "approaches" / approach_label / "fold_metrics.csv"
+        specs.append(
+            ParallelApproachSpec(
+                approach_label=approach_label,
+                extractor=extractor,
+                checkpoint_dir=checkpoint_dir,
+                fold_metrics_path=fold_metrics_path,
+                feature_dim=_feature_dim_from_checkpoint_dir(checkpoint_dir),
+                quality_weight=max(_parallel_quality_score(summary_payload), 1e-6),
+                mean_auroc=float(summary_payload.get("mean_auroc") or 0.0),
+                mean_f1_macro=float(summary_payload.get("mean_f1_macro") or 0.0),
+                mean_auprc=float(summary_payload.get("mean_auprc") or 0.0),
+                mean_balanced_accuracy=float(summary_payload.get("mean_balanced_accuracy") or 0.0),
+                mean_best_threshold=float(summary_payload.get("mean_best_threshold") or 0.5),
+            )
+        )
+    return tuple(specs)
+
+
 @lru_cache(maxsize=1)
 def _historical_bundle_request() -> dict[str, Any]:
     config_path = _historical_bundle_config_path()
@@ -364,32 +518,12 @@ def _inference_tile_count() -> int:
     configured_tile_count = max(8, configured_tile_count)
     if _is_manager1_mode():
         return _exact_extraction_settings()["max_tiles_per_slide"]
-    fast_tile_count = int(getattr(settings, "MSI_FAST_MAX_TILES", 64) or 64)
-    fast_tile_count = max(8, min(configured_tile_count, fast_tile_count))
-    bundle_metrics = _bundle_metrics()
-    bundle_extractor = str(
-        bundle_metrics.get("resolved_feature_extractor_used")
-        or bundle_metrics.get("feature_extractor_used")
-        or ""
-    )
-    if bundle_extractor == "student-virchow2":
-        return fast_tile_count
-    package_dir = _default_encoder_dir()
-    manifest_path = package_dir / "training_meta.json"
-    if manifest_path.exists():
-        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-        manifest_tile_count = int(payload.get("tiles_per_slide") or configured_tile_count)
-        return max(8, min(fast_tile_count, manifest_tile_count))
-    return fast_tile_count
+    return configured_tile_count
 
 
 def _active_ensemble_checkpoints() -> tuple[EnsembleCheckpoint, ...]:
     checkpoints = get_ensemble_checkpoints()
-    if _is_manager1_mode():
-        return checkpoints
-    fast_limit = int(getattr(settings, "MSI_FAST_CHECKPOINTS", 4) or 4)
-    fast_limit = max(1, min(len(checkpoints), fast_limit))
-    return checkpoints[:fast_limit]
+    return checkpoints
 
 
 @lru_cache(maxsize=1)
@@ -428,6 +562,45 @@ def get_ensemble_checkpoints() -> tuple[EnsembleCheckpoint, ...]:
 
 
 @lru_cache(maxsize=1)
+def _parallel_checkpoints_by_approach() -> dict[str, tuple[EnsembleCheckpoint, ...]]:
+    checkpoint_map: dict[str, tuple[EnsembleCheckpoint, ...]] = {}
+    for spec in _parallel_approach_specs():
+        rows: list[dict[str, Any]] = []
+        with spec.fold_metrics_path.open(newline="", encoding="utf-8") as handle:
+            reader = csv.DictReader(handle)
+            for row in reader:
+                row["repeat"] = int(row["repeat"])
+                row["fold"] = int(row["fold"])
+                row["score"] = _score_row(row)
+                rows.append(row)
+        rows.sort(key=lambda item: (item["score"], float(item["auroc"]), float(item["f1_macro"])), reverse=True)
+        selected: list[EnsembleCheckpoint] = []
+        for row in rows:
+            repeat = int(row["repeat"])
+            fold = int(row["fold"])
+            checkpoint_path = spec.checkpoint_dir / f"repeat_{repeat}_fold_{fold}_best_valid.pth"
+            if not checkpoint_path.exists():
+                continue
+            selected.append(
+                EnsembleCheckpoint(
+                    checkpoint_path=checkpoint_path,
+                    repeat=repeat,
+                    fold=fold,
+                    score=float(row["score"]),
+                    threshold=float(row["best_threshold"]),
+                    auroc=float(row["auroc"]),
+                    f1_macro=float(row["f1_macro"]),
+                    auprc=float(row["auprc"]),
+                    balanced_accuracy=float(row["balanced_accuracy"]),
+                    approach_label=spec.approach_label,
+                    extractor=spec.extractor,
+                )
+            )
+        checkpoint_map[spec.approach_label] = tuple(selected)
+    return checkpoint_map
+
+
+@lru_cache(maxsize=1)
 def _load_encoder() -> tuple[Any, Any, str]:
     package_dir = _default_encoder_dir()
     package = load_encoder_package(package_dir)
@@ -457,6 +630,60 @@ def _current_encoder_metadata() -> dict[str, Any]:
 
 
 def get_inference_metadata() -> dict[str, Any]:
+    if _is_parallel_mode():
+        approach_specs = _parallel_approach_specs()
+        total_checkpoints = sum(len(items) for items in _parallel_checkpoints_by_approach().values())
+        return {
+            "bundle_root": str(_parallel_export_root()),
+            "approach_label": "Preserved top-4 offline fusion",
+            "mil_model": "TransMIL late fusion",
+            "feature_dim": 0,
+            "feature_dims_by_approach": [
+                {
+                    "approach_label": spec.approach_label,
+                    "extractor": spec.extractor,
+                    "feature_dim": spec.feature_dim,
+                    "checkpoint_count": len(_parallel_checkpoints_by_approach().get(spec.approach_label, ())),
+                    "quality_weight": spec.quality_weight,
+                }
+                for spec in approach_specs
+            ],
+            "available_checkpoints": total_checkpoints,
+            "selected_checkpoint_count": total_checkpoints,
+            "selected_repeats": sorted(
+                {
+                    checkpoint.repeat
+                    for checkpoints in _parallel_checkpoints_by_approach().values()
+                    for checkpoint in checkpoints
+                }
+            ),
+            "mean_threshold": float(
+                sum(spec.mean_best_threshold for spec in approach_specs) / max(1, len(approach_specs))
+            ),
+            "accepted_feature_suffixes": [".pt", ".pth", ".bin", ".npz"],
+            "accepted_slide_suffixes": [],
+            "accepted_upload_suffixes": [".pt", ".pth", ".bin", ".npz"],
+            "input_mode": "parallel_feature_bag_package",
+            "pipeline_mode": _pipeline_mode(),
+            "pipeline_style": "preserved four-model offline fusion",
+            "encoder_ready": True,
+            "encoder_error": "",
+            "encoder": {
+                "package_dir": str(_parallel_export_root()),
+                "encoder_label": "preserved-top4-package",
+                "encoder_type": "offline_multi_bag",
+                "embedding_dim": 0,
+                "tile_count": 0,
+                "backbone_name": ", ".join(spec.extractor for spec in approach_specs),
+            },
+            "device": str(_device()),
+            "preferred_device": _preferred_device_name(),
+            "cuda_available": bool(torch.cuda.is_available()),
+            "gpu_status": "available" if torch.cuda.is_available() else "not available",
+            "serving_ready": True,
+            "serving_message": "",
+            "bundle_feature_extractor_used": "multiple",
+        }
     checkpoints = _active_ensemble_checkpoints()
     mean_threshold = sum(item.threshold for item in checkpoints) / max(1, len(checkpoints))
     preferred_device = _preferred_device_name()
@@ -478,13 +705,8 @@ def get_inference_metadata() -> dict[str, Any]:
         encoder_ready = False
         encoder_error = str(exc).strip() or type(exc).__name__
     serving_ready, serving_message = _serving_compatibility()
-    exact_mode = _is_manager1_mode()
-    accepted_slide_suffixes = sorted(RAW_SLIDE_SUFFIXES) if exact_mode else sorted(RAW_SLIDE_SUFFIXES | IMAGE_SUFFIXES)
-    accepted_upload_suffixes = (
-        sorted(TRUSTED_TENSOR_SUFFIXES | RAW_SLIDE_SUFFIXES)
-        if exact_mode
-        else sorted(TRUSTED_TENSOR_SUFFIXES | RAW_SLIDE_SUFFIXES | IMAGE_SUFFIXES)
-    )
+    accepted_slide_suffixes = sorted(RAW_SLIDE_SUFFIXES)
+    accepted_upload_suffixes = sorted(TRUSTED_TENSOR_SUFFIXES | RAW_SLIDE_SUFFIXES)
     return {
         "bundle_root": str(_bundle_root()),
         "approach_label": str(
@@ -501,9 +723,9 @@ def get_inference_metadata() -> dict[str, Any]:
         "accepted_feature_suffixes": sorted(TRUSTED_TENSOR_SUFFIXES),
         "accepted_slide_suffixes": accepted_slide_suffixes,
         "accepted_upload_suffixes": accepted_upload_suffixes,
-        "input_mode": "feature_bag_exact" if exact_mode else "raw_slide_or_feature_bag",
+        "input_mode": "feature_bag_exact",
         "pipeline_mode": _pipeline_mode(),
-        "pipeline_style": "training-matched exact bundle" if exact_mode else "local offline app",
+        "pipeline_style": "training-matched exact bundle",
         "encoder_ready": encoder_ready,
         "encoder_error": encoder_error,
         "encoder": encoder_meta,
@@ -542,6 +764,42 @@ def _unwrap_feature_payload(payload: Any) -> Any:
     return None
 
 
+def _flatten_named_feature_entries(payload: Any, *, prefix: str = "") -> list[tuple[str, Any]]:
+    entries: list[tuple[str, Any]] = []
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            next_prefix = f"{prefix}/{key}" if prefix else str(key)
+            entries.extend(_flatten_named_feature_entries(value, prefix=next_prefix))
+        return entries
+    if isinstance(payload, (list, tuple)):
+        for index, value in enumerate(payload):
+            next_prefix = f"{prefix}/{index}" if prefix else str(index)
+            entries.extend(_flatten_named_feature_entries(value, prefix=next_prefix))
+        return entries
+    if isinstance(payload, (torch.Tensor, np.ndarray)):
+        entries.append((prefix or "tensor", payload))
+    return entries
+
+
+def _coerce_feature_tensor(features: Any, *, expected_feature_dim: int) -> torch.Tensor:
+    if isinstance(features, np.ndarray):
+        features = torch.from_numpy(features)
+    if not isinstance(features, torch.Tensor):
+        raise ValueError("The uploaded feature bag did not decode into a tensor.")
+    features = features.detach().cpu()
+    if features.dim() == 3 and features.shape[0] == 1:
+        features = features.squeeze(0)
+    if features.dim() == 1:
+        features = features.unsqueeze(0)
+    if features.dim() != 2:
+        raise ValueError(f"Expected a 2D feature bag, got shape {tuple(features.shape)}.")
+    if features.shape[-1] != expected_feature_dim:
+        raise ValueError(f"Expected feature dimension {expected_feature_dim}, got {features.shape[-1]}.")
+    if features.shape[0] < 1:
+        raise ValueError("The uploaded feature bag is empty.")
+    return features.float()
+
+
 def load_feature_bag(upload_path: Path) -> torch.Tensor:
     suffix = upload_path.suffix.lower()
     if suffix not in TRUSTED_TENSOR_SUFFIXES:
@@ -560,24 +818,65 @@ def load_feature_bag(upload_path: Path) -> torch.Tensor:
     features = _unwrap_feature_payload(payload)
     if features is None:
         raise ValueError("Could not locate a feature tensor in the uploaded bag.")
-    if isinstance(features, np.ndarray):
-        features = torch.from_numpy(features)
-    if not isinstance(features, torch.Tensor):
-        raise ValueError("The uploaded feature bag did not decode into a tensor.")
+    return _coerce_feature_tensor(features, expected_feature_dim=_feature_dim())
 
-    features = features.detach().cpu()
-    if features.dim() == 3 and features.shape[0] == 1:
-        features = features.squeeze(0)
-    if features.dim() == 1:
-        features = features.unsqueeze(0)
-    if features.dim() != 2:
-        raise ValueError(f"Expected a 2D feature bag, got shape {tuple(features.shape)}.")
-    expected_feature_dim = _feature_dim()
-    if features.shape[-1] != expected_feature_dim:
-        raise ValueError(f"Expected feature dimension {expected_feature_dim}, got {features.shape[-1]}.")
-    if features.shape[0] < 1:
-        raise ValueError("The uploaded feature bag is empty.")
-    return features.float()
+
+def _parallel_aliases(spec: ParallelApproachSpec) -> tuple[str, ...]:
+    aliases = {
+        spec.approach_label,
+        _slug_label(spec.approach_label),
+        spec.extractor,
+        spec.extractor.replace("-", "_"),
+        spec.extractor.replace("-", ""),
+    }
+    approach_num = "".join(ch for ch in spec.approach_label if ch.isdigit())
+    if approach_num:
+        aliases.add(f"approach{approach_num}")
+        aliases.add(f"a{approach_num}")
+    return tuple(_normalize_key(item) for item in aliases if item)
+
+
+def load_parallel_feature_package(upload_path: Path) -> dict[str, torch.Tensor]:
+    suffix = upload_path.suffix.lower()
+    if suffix not in {".pt", ".pth", ".bin", ".npz"}:
+        raise ValueError(
+            "Parallel mode expects a packaged multi-bag upload. Use .pt/.pth/.bin dictionaries or a .npz archive "
+            "with one bag for each preserved approach."
+        )
+
+    if suffix == ".npz":
+        archive = np.load(upload_path, allow_pickle=False)
+        if not archive.files:
+            raise ValueError("The .npz upload does not contain any arrays.")
+        payload: Any = {name: archive[name] for name in archive.files}
+    else:
+        payload = torch.load(upload_path, map_location="cpu", weights_only=False)
+
+    entries = _flatten_named_feature_entries(payload)
+    if not entries:
+        raise ValueError("Could not locate any named feature tensors in the uploaded parallel package.")
+
+    matched: dict[str, torch.Tensor] = {}
+    missing: list[str] = []
+    for spec in _parallel_approach_specs():
+        aliases = _parallel_aliases(spec)
+        chosen_payload = None
+        for path, candidate in entries:
+            normalized_path = _normalize_key(path)
+            if any(alias and alias in normalized_path for alias in aliases):
+                chosen_payload = candidate
+                break
+        if chosen_payload is None:
+            missing.append(f"{spec.approach_label} ({spec.extractor})")
+            continue
+        matched[spec.approach_label] = _coerce_feature_tensor(chosen_payload, expected_feature_dim=spec.feature_dim)
+    if missing:
+        raise ValueError(
+            "The parallel package is missing preserved bags for: "
+            + ", ".join(missing)
+            + ". Include named tensors for all four approaches in one .npz or .pt package."
+        )
+    return matched
 
 
 def _coords_from_thumbnail(
@@ -1145,16 +1444,29 @@ def _load_ensemble_models(mode: str | None = None) -> tuple[tuple[EnsembleCheckp
     return tuple(loaded)
 
 
-@torch.inference_mode()
-def _predict_feature_tensor(features: torch.Tensor, *, progress_callback: ProgressCallback | None = None) -> dict[str, Any]:
-    _emit_progress(progress_callback, "ensemble_scoring", "Running the preserved TransMIL ensemble across the extracted feature bag.", 90)
+@lru_cache(maxsize=1)
+def _load_parallel_models() -> dict[str, tuple[tuple[EnsembleCheckpoint, TransMIL], ...]]:
+    loaded: dict[str, tuple[tuple[EnsembleCheckpoint, TransMIL], ...]] = {}
+    device = _device()
+    for spec in _parallel_approach_specs():
+        approach_loaded: list[tuple[EnsembleCheckpoint, TransMIL]] = []
+        for item in _parallel_checkpoints_by_approach().get(spec.approach_label, ()):
+            model = TransMIL(input_dim=spec.feature_dim)
+            state_dict = torch.load(item.checkpoint_path, map_location="cpu", weights_only=False)
+            model.load_state_dict(state_dict, strict=True)
+            model.to(device)
+            model.eval()
+            approach_loaded.append((item, model))
+        loaded[spec.approach_label] = tuple(approach_loaded)
+    return loaded
+
+
+def _score_loaded_models(features: torch.Tensor, loaded_models: tuple[tuple[EnsembleCheckpoint, TransMIL], ...]) -> dict[str, Any]:
     per_checkpoint = []
     bundle_positive_probabilities = []
-    loaded_models = _load_ensemble_models(_pipeline_mode())
     quality_scores = []
-
     device = _device()
-    features_on_device = features.to(device, non_blocking=device.type == "cuda")
+    features_on_device = features.to(device, non_blocking=device.type == "cuda").clone()
 
     if device.type == "cuda":
         for item, model in loaded_models:
@@ -1180,11 +1492,12 @@ def _predict_feature_tensor(features: torch.Tensor, *, progress_callback: Progre
                     "auprc": item.auprc,
                     "balanced_accuracy": item.balanced_accuracy,
                     "quality_score": quality_score,
+                    "approach_label": item.approach_label,
+                    "extractor": item.extractor,
                 }
             )
     else:
-        def _score_cpu(entry: tuple[EnsembleCheckpoint, TransMIL]) -> tuple[dict[str, Any], float, float]:
-            item, model = entry
+        for item, model in loaded_models:
             logits = model(features_on_device)
             bundle_positive_probability = float(torch.softmax(logits, dim=-1)[0, 1].item())
             quality_score = (
@@ -1193,7 +1506,7 @@ def _predict_feature_tensor(features: torch.Tensor, *, progress_callback: Progre
                 + float(item.auprc) * 0.20
                 + float(item.balanced_accuracy) * 0.15
             )
-            return (
+            per_checkpoint.append(
                 {
                     "checkpoint": item.checkpoint_path.name,
                     "repeat": item.repeat,
@@ -1205,16 +1518,12 @@ def _predict_feature_tensor(features: torch.Tensor, *, progress_callback: Progre
                     "auprc": item.auprc,
                     "balanced_accuracy": item.balanced_accuracy,
                     "quality_score": quality_score,
-                },
-                bundle_positive_probability,
-                quality_score,
+                    "approach_label": item.approach_label,
+                    "extractor": item.extractor,
+                }
             )
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=_score_worker_count()) as pool:
-            for payload, bundle_positive_probability, quality_score in pool.map(_score_cpu, loaded_models):
-                per_checkpoint.append(payload)
-                bundle_positive_probabilities.append(bundle_positive_probability)
-                quality_scores.append(quality_score)
+            bundle_positive_probabilities.append(bundle_positive_probability)
+            quality_scores.append(quality_score)
     bundle_positive_probability = float(sum(bundle_positive_probabilities) / max(1, len(bundle_positive_probabilities)))
     bundle_positive_threshold = float(sum(item.threshold for item, _ in loaded_models) / max(1, len(bundle_positive_probabilities)))
     ensemble_probability = 1.0 - bundle_positive_probability
@@ -1247,6 +1556,83 @@ def _predict_feature_tensor(features: torch.Tensor, *, progress_callback: Progre
 
 
 @torch.inference_mode()
+def _predict_feature_tensor(features: torch.Tensor, *, progress_callback: ProgressCallback | None = None) -> dict[str, Any]:
+    _emit_progress(progress_callback, "ensemble_scoring", "Running the preserved TransMIL ensemble across the extracted feature bag.", 90)
+    loaded_models = _load_ensemble_models(_pipeline_mode())
+    return _score_loaded_models(features, loaded_models)
+
+
+@torch.inference_mode()
+def predict_parallel_feature_package(upload_path: Path, *, progress_callback: ProgressCallback | None = None) -> dict[str, Any]:
+    _emit_progress(progress_callback, "parallel_package", "Loading the preserved four-model feature package.", 18)
+    feature_bags = load_parallel_feature_package(upload_path)
+    loaded_models = _load_parallel_models()
+    approach_results: list[dict[str, Any]] = []
+    checkpoint_rows: list[dict[str, Any]] = []
+    total_tiles = 0
+    total_checkpoints = 0
+    for index, spec in enumerate(_parallel_approach_specs(), start=1):
+        _emit_progress(
+            progress_callback,
+            "parallel_scoring",
+            f"Scoring {spec.approach_label} ({index}/{len(_parallel_approach_specs())}) with its preserved checkpoints.",
+            30 + int(index * 12),
+        )
+        result = _score_loaded_models(feature_bags[spec.approach_label], loaded_models.get(spec.approach_label, ()))
+        result["approach_label"] = spec.approach_label
+        result["extractor"] = spec.extractor
+        result["quality_weight"] = spec.quality_weight
+        result["mean_auroc"] = spec.mean_auroc
+        result["mean_f1_macro"] = spec.mean_f1_macro
+        result["mean_auprc"] = spec.mean_auprc
+        result["mean_balanced_accuracy"] = spec.mean_balanced_accuracy
+        approach_results.append(result)
+        checkpoint_rows.extend(result["per_checkpoint"])
+        total_tiles += int(result["tile_count"])
+        total_checkpoints += int(result["checkpoint_count"])
+
+    total_weight = sum(max(float(item["quality_weight"]), 1e-6) for item in approach_results)
+    fused_probability = sum(float(item["probability"]) * float(item["quality_weight"]) for item in approach_results) / max(total_weight, 1e-6)
+    fused_threshold = sum(float(item["threshold"]) * float(item["quality_weight"]) for item in approach_results) / max(total_weight, 1e-6)
+    equal_weight_probability = sum(float(item["probability"]) for item in approach_results) / max(1, len(approach_results))
+    vote_spread = abs(fused_probability - fused_threshold)
+    vote_score = max(0.0, min(1.0, vote_spread * 2.0))
+    model_quality = sum(float(item["model_quality_score"]) * float(item["quality_weight"]) for item in approach_results) / max(total_weight, 1e-6)
+    blended_confidence = (model_quality * 0.65) + (vote_score * 0.35)
+    if blended_confidence >= 0.82:
+        confidence_level = "High"
+    elif blended_confidence >= 0.64:
+        confidence_level = "Medium"
+    else:
+        confidence_level = "Low"
+    _emit_progress(progress_callback, "completed", "Parallel offline fusion is complete and the response payload is being returned.", 100)
+    return {
+        "label": "MSI-H" if fused_probability >= fused_threshold else "MSS",
+        "probability": float(fused_probability),
+        "equal_weight_probability": float(equal_weight_probability),
+        "threshold": float(fused_threshold),
+        "confidence": vote_spread,
+        "confidence_score": blended_confidence,
+        "confidence_percent": blended_confidence * 100.0,
+        "confidence_level": confidence_level,
+        "model_quality_score": model_quality,
+        "vote_strength_score": vote_score,
+        "tile_count": total_tiles,
+        "feature_dim": 0,
+        "checkpoint_count": total_checkpoints,
+        "input_kind": "parallel_feature_package",
+        "input_kind_display": "Parallel feature package",
+        "encoder_label": "preserved-top4-package",
+        "encoder_backbone": ", ".join(spec.extractor for spec in _parallel_approach_specs()),
+        "encoder_type": "offline_multi_bag",
+        "per_checkpoint": checkpoint_rows,
+        "per_approach": approach_results,
+        "feature_bag_count": len(approach_results),
+        "fusion_method": "quality_weighted_mean",
+    }
+
+
+@torch.inference_mode()
 def predict_feature_bag(upload_path: Path, *, progress_callback: ProgressCallback | None = None) -> dict[str, Any]:
     features = load_feature_bag(upload_path)
     result = _predict_feature_tensor(features, progress_callback=progress_callback)
@@ -1256,6 +1642,9 @@ def predict_feature_bag(upload_path: Path, *, progress_callback: ProgressCallbac
 
 def predict_upload(upload_path: Path, *, progress_callback: ProgressCallback | None = None) -> dict[str, Any]:
     _emit_progress(progress_callback, "request_received", "The backend accepted the upload and is validating the runtime bundle.", 6)
+    if _is_parallel_mode():
+        result = predict_parallel_feature_package(upload_path, progress_callback=progress_callback)
+        return result
     serving_ready, serving_message = _serving_compatibility()
     if not serving_ready:
         raise RuntimeError(serving_message)

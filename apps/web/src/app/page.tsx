@@ -19,9 +19,34 @@ type CheckpointTrace = {
   auprc: number;
   balanced_accuracy: number;
   quality_score: number;
+  approach_label?: string;
+  extractor?: string;
+};
+
+type ParallelApproachResult = {
+  approach_label: string;
+  extractor: string;
+  label: string;
+  probability: number;
+  threshold: number;
+  confidence_level: string;
+  confidence_score: number;
+  model_quality_score: number;
+  vote_strength_score: number;
+  tile_count: number;
+  feature_dim: number;
+  checkpoint_count: number;
+  quality_weight: number;
+  mean_auroc?: number;
+  mean_f1_macro?: number;
+  mean_auprc?: number;
+  mean_balanced_accuracy?: number;
 };
 
 type InferenceMetadata = {
+  bundle_root?: string;
+  approach_label?: string;
+  mil_model?: string;
   pipeline_mode: string;
   pipeline_style: string;
   device: string;
@@ -29,6 +54,18 @@ type InferenceMetadata = {
   cuda_available: boolean;
   gpu_status: string;
   mean_threshold: number;
+  feature_dim?: number;
+  available_checkpoints?: number;
+  selected_checkpoint_count?: number;
+  accepted_upload_suffixes?: string[];
+  input_mode?: string;
+  feature_dims_by_approach?: Array<{
+    approach_label: string;
+    extractor: string;
+    feature_dim: number;
+    checkpoint_count: number;
+    quality_weight: number;
+  }>;
   encoder: {
     encoder_label?: string;
     encoder_type?: string;
@@ -91,6 +128,8 @@ type PredictJobStatus = {
   system?: RuntimeSystem;
 };
 
+type PredictMode = "exact" | "parallel";
+
 type PredictResponse = {
   label: string;
   confidence_level: string;
@@ -109,6 +148,10 @@ type PredictResponse = {
   encoder_backbone?: string;
   encoder_type?: string;
   per_checkpoint: CheckpointTrace[];
+  per_approach?: ParallelApproachResult[];
+  feature_bag_count?: number;
+  fusion_method?: string;
+  equal_weight_probability?: number;
   specimen_preview_data_url?: string;
   tile_preview_data_url?: string;
   inference?: InferenceMetadata;
@@ -369,12 +412,15 @@ export default function Home() {
   const [selectedStorageDetail, setSelectedStorageDetail] = useState<StorageSampleDetail | null>(null);
   const [job, setJob] = useState<PredictJobStatus | null>(null);
   const [activeTab, setActiveTab] = useState<"predict" | "storage" | "history" | "analysis" | "parallel">("predict");
-  const [predictMode, setPredictMode] = useState<"exact" | "fast">(() => {
+  const [predictMode, setPredictMode] = useState<PredictMode>(() => {
     if (typeof window === "undefined") {
       return "exact";
     }
     const mode = new URLSearchParams(window.location.search).get("mode");
-    return mode === "fast" ? "fast" : "exact";
+    if (mode === "parallel") {
+      return mode;
+    }
+    return "exact";
   });
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -1028,6 +1074,8 @@ export default function Home() {
   const activeMetadata = result?.inference && result?.system ? { inference: result.inference, system: result.system } : metadata;
   const specimenViewerSrc = result ? result.specimen_preview_data_url || "" : localPreviewUrl;
   const activeSlideType = slideTypeForName(file?.name || resultSourceName || selectedName);
+  const isParallelMode = predictMode === "parallel";
+  const isParallelResult = Boolean(result?.per_approach?.length);
   const probabilityPercent = result ? `${(result.probability * 100).toFixed(2)}%` : "";
   const thresholdPercent = result ? `${(result.threshold * 100).toFixed(2)}%` : "";
   const voteStrengthPercent = result ? `${(result.vote_strength_score * 100).toFixed(1)}%` : "";
@@ -1042,6 +1090,20 @@ export default function Home() {
     const probabilityValue = result.probability * 100;
     const thresholdValue = result.threshold * 100;
     const delta = Math.abs(probabilityValue - thresholdValue);
+    if (result.per_approach?.length) {
+      const bestApproach = [...result.per_approach].sort((left, right) => (right.model_quality_score || 0) - (left.model_quality_score || 0))[0];
+      const expectationLine = activeExpectedLabel
+        ? `The annotated expected label for this specimen was ${activeExpectedLabel}, and the fused four-model output ${activeExpectedLabel === result.label ? "matched" : "did not match"} that expectation.`
+        : "No expected MSI annotation was attached to this run, so the fused result is shown without a match check.";
+      return [
+        `${selectedName} was classified as ${result.label} because the preserved four-model fusion produced an MSI-H probability of ${probabilityValue.toFixed(2)}% against an operating threshold of ${thresholdValue.toFixed(2)}%.`,
+        expectationLine,
+        `The active fusion method is ${result.fusion_method || "quality-weighted mean"}, using ${result.feature_bag_count || result.per_approach.length} preserved feature bags and ${result.checkpoint_count} total checkpoints.`,
+        `Best preserved contributor on validation was ${bestApproach?.approach_label || "the leading approach"}, while the live fused confidence bucket is ${result.confidence_level} at ${confidencePercent}.`,
+        "This offline path does not re-extract tiles from a slide. It expects one packaged bag for each preserved approach: UNI2-h, Virchow2, H-Optimus-0, and Midnight-12k.",
+        `Threshold margin on this case was ${delta.toFixed(2)} percentage points, vote strength is ${voteStrengthPercent}, and the blended model-quality score is ${modelQualityPercent}.`,
+      ];
+    }
     const caution =
       result.tile_count < 64
         ? "This was a light local slide pass, so it is faster but less training-matched than the original VM extraction path."
@@ -1081,6 +1143,10 @@ export default function Home() {
       encoder_backbone: selectedHistoryItem.encoder_backbone || "",
       encoder_type: selectedHistoryItem.encoder_type || "",
       per_checkpoint: selectedHistoryItem.per_checkpoint || [],
+      per_approach: selectedHistoryItem.result_payload?.per_approach || [],
+      feature_bag_count: selectedHistoryItem.result_payload?.feature_bag_count || 0,
+      fusion_method: selectedHistoryItem.result_payload?.fusion_method || "",
+      equal_weight_probability: selectedHistoryItem.result_payload?.equal_weight_probability,
       specimen_preview_data_url: selectedHistoryItem.specimen_preview_data_url || "",
       tile_preview_data_url: selectedHistoryItem.tile_preview_data_url || "",
       inference: selectedHistoryItem.inference,
@@ -1094,15 +1160,25 @@ export default function Home() {
     const confidenceValue = `${restoredResult.confidence_percent.toFixed(1)}%`;
     const voteValue = `${(restoredResult.vote_strength_score * 100).toFixed(1)}%`;
     const qualityValue = `${(restoredResult.model_quality_score * 100).toFixed(1)}%`;
-    const historyNarrative = [
-      `${historyName} was saved as ${restoredResult.label} with an MSI-H probability of ${probabilityValue.toFixed(2)}% against a threshold of ${thresholdValue.toFixed(2)}%.`,
-      expectedLabel
-        ? `The saved expected label was ${expectedLabel}, and this result ${expectedLabel === restoredResult.label ? "matched" : "did not match"} that annotation.`
-        : "No expected label was saved with this history entry.",
-      `Saved confidence is ${restoredResult.confidence_level} at ${confidenceValue}. Vote strength is ${voteValue} and the blended model-quality score is ${qualityValue}.`,
-      `This rerun kept ${restoredResult.checkpoint_count} preserved checkpoints, feature dimension ${restoredResult.feature_dim}, and ${restoredResult.tile_count} sampled tiles.`,
-      `Threshold margin on this saved result was ${delta.toFixed(2)} percentage points.`,
-    ];
+    const historyNarrative = restoredResult.per_approach?.length
+      ? [
+          `${historyName} was saved as ${restoredResult.label} with a fused MSI-H probability of ${probabilityValue.toFixed(2)}% against a threshold of ${thresholdValue.toFixed(2)}%.`,
+          expectedLabel
+            ? `The saved expected label was ${expectedLabel}, and this fused result ${expectedLabel === restoredResult.label ? "matched" : "did not match"} that annotation.`
+            : "No expected label was saved with this history entry.",
+          `Saved confidence is ${restoredResult.confidence_level} at ${confidenceValue}. Vote strength is ${voteValue} and the blended model-quality score is ${qualityValue}.`,
+          `This saved parallel inference used ${restoredResult.feature_bag_count || restoredResult.per_approach.length} preserved bags and ${restoredResult.checkpoint_count} total checkpoints.`,
+          `Threshold margin on this saved result was ${delta.toFixed(2)} percentage points.`,
+        ]
+      : [
+          `${historyName} was saved as ${restoredResult.label} with an MSI-H probability of ${probabilityValue.toFixed(2)}% against a threshold of ${thresholdValue.toFixed(2)}%.`,
+          expectedLabel
+            ? `The saved expected label was ${expectedLabel}, and this result ${expectedLabel === restoredResult.label ? "matched" : "did not match"} that annotation.`
+            : "No expected label was saved with this history entry.",
+          `Saved confidence is ${restoredResult.confidence_level} at ${confidenceValue}. Vote strength is ${voteValue} and the blended model-quality score is ${qualityValue}.`,
+          `This rerun kept ${restoredResult.checkpoint_count} preserved checkpoints, feature dimension ${restoredResult.feature_dim}, and ${restoredResult.tile_count} sampled tiles.`,
+          `Threshold margin on this saved result was ${delta.toFixed(2)} percentage points.`,
+        ];
     return {
       item: selectedHistoryItem,
       result: restoredResult,
@@ -1122,6 +1198,15 @@ export default function Home() {
     const ext = file?.name.split(".").pop()?.toLowerCase() || "";
     const isSlide = ["svs", "tif", "tiff", "ndpi", "mrxs", "scn"].includes(ext);
     const isExact = (activeMetadata?.inference.pipeline_mode || "").toLowerCase() === "manager1";
+    if ((activeMetadata?.inference.pipeline_mode || "").toLowerCase() === "parallel") {
+      return [
+        { label: "Upload received", detail: "The preserved multi-bag package has been accepted by the predictor.", threshold: 0 },
+        { label: "Preview decode", detail: "Preparing the packaged offline feature payload.", threshold: 4 },
+        { label: "Parallel package loading", detail: "Locating all four preserved feature bags inside the uploaded package.", threshold: 10 },
+        { label: "Parallel ensemble scoring", detail: "Scoring the UNI2-h, Virchow2, H-Optimus-0, and Midnight-12k checkpoints in parallel.", threshold: 22 },
+        { label: "Result packaging", detail: "Preparing the fused response and per-model technical record.", threshold: 34 },
+      ];
+    }
     return [
       { label: "Upload received", detail: "The specimen file has been accepted by the predictor.", threshold: 0 },
       {
@@ -1220,7 +1305,7 @@ export default function Home() {
     return `${minutes}m ${seconds}s`;
   }
 
-  function switchPredictMode(nextMode: "exact" | "fast") {
+  function switchPredictMode(nextMode: PredictMode) {
     if (nextMode === predictMode) {
       return;
     }
@@ -1400,10 +1485,10 @@ export default function Home() {
             <div className="hero-copy">
               <span className="hero-pill">
                 <Sparkles size={14} />
-                Virchow2 live predictor
+                4-model MSI workbench
               </span>
               <h1>MSI detection</h1>
-              <p>Fluid MSI detection with real local inference.</p>
+              <p>Fluid MSI detection with live inference plus a preserved 4-model validated lineup on the same screen.</p>
             </div>
           </div>
         </section>
@@ -1498,25 +1583,53 @@ export default function Home() {
               </button>
               <button
                 type="button"
-                className={`mode-toggle-button ${predictMode === "fast" ? "active" : ""}`}
-                onClick={() => switchPredictMode("fast")}
-                aria-pressed={predictMode === "fast"}
+                className={`mode-toggle-button ${predictMode === "parallel" ? "active" : ""}`}
+                onClick={() => switchPredictMode("parallel")}
+                aria-pressed={predictMode === "parallel"}
               >
-                <strong>Fast mode</strong>
-                <span>Lower-latency local path</span>
+                <strong>Parallel offline</strong>
+                <span>4 preserved bags fused together</span>
               </button>
             </div>
 
             <p className="mode-note">
-              Current selection: <strong>{predictMode === "exact" ? "Exact mode" : "Fast mode"}</strong>.
+              Current selection: <strong>{predictMode === "exact" ? "Exact mode" : "Parallel offline"}</strong>.
               {" "}The runtime details below refresh to match this choice.
             </p>
+
+            <section className="lineup-inline-panel">
+              <div className="lineup-inline-head">
+                <div>
+                  <p className="section-kicker">Validated lineup</p>
+                  <h3>Four preserved models</h3>
+                </div>
+                <span className="runtime-badge">
+                  {analysisSummary?.parallel_bundle?.best_approach || "Bundle loading"}
+                </span>
+              </div>
+              <div className="lineup-chip-grid">
+                {(parallelProfiles.length ? parallelProfiles : []).map((item) => (
+                  <div key={item.approach_label} className={`lineup-chip ${item.is_best ? "best" : ""}`}>
+                    <strong>{item.approach_label}</strong>
+                    <span>{item.extractor}</span>
+                    <div className="lineup-chip-meta">
+                      <em>AUROC {typeof item.mean_auroc === "number" ? item.mean_auroc.toFixed(4) : "-"}</em>
+                      <em>FP {item.false_positive}</em>
+                      <em>FN {item.false_negative}</em>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="lineup-inline-note">
+                This frontend panel keeps the preserved 4-model benchmark visible during live use. The active prediction runtime follows either the training-matched exact path or the preserved offline fusion path below.
+              </p>
+            </section>
 
             <label className="upload-zone">
               <input
                 type="file"
                 name="prediction_input"
-                accept=".svs,.tif,.tiff,.ndpi,.mrxs,.scn,.png,.jpg,.jpeg,.bmp,.webp,.pt,.pth,.bin,.npy,.npz"
+                accept={isParallelMode ? ".pt,.pth,.bin,.npz" : ".svs,.tif,.tiff,.ndpi,.mrxs,.scn,.png,.jpg,.jpeg,.bmp,.webp,.pt,.pth,.bin,.npy,.npz"}
                 onChange={(event) => {
                   setFile(event.target.files?.[0] || null);
                   setError("");
@@ -1525,7 +1638,9 @@ export default function Home() {
               <span className="upload-zone-kicker">Selected file</span>
               <strong>{selectedName}</strong>
               <span className="upload-zone-copy">
-                Supports SVS slides, images, and trusted feature bags.
+                {isParallelMode
+                  ? "Upload one packaged .npz or .pt file that contains preserved UNI2-h, Virchow2, H-Optimus-0, and Midnight-12k bags."
+                  : "Supports SVS slides, images, and trusted feature bags."}
               </span>
             </label>
 
@@ -1726,8 +1841,8 @@ export default function Home() {
                     <strong>{confidencePercent}</strong>
                   </div>
                   <div className="metric-box">
-                    <span>Tiles used</span>
-                    <strong>{result.tile_count}</strong>
+                    <span>{isParallelResult ? "Bags included" : "Tiles used"}</span>
+                    <strong>{isParallelResult ? (result.feature_bag_count || result.per_approach?.length || 0) : result.tile_count}</strong>
                   </div>
                   <div className="metric-box">
                     <span>MSI-H probability</span>
@@ -1738,12 +1853,12 @@ export default function Home() {
                     <strong>{thresholdPercent}</strong>
                   </div>
                   <div className="metric-box">
-                    <span>Ensemble checkpoints</span>
+                    <span>{isParallelResult ? "Total checkpoints" : "Ensemble checkpoints"}</span>
                     <strong>{result.checkpoint_count}</strong>
                   </div>
                   <div className="metric-box">
-                    <span>Feature dimension</span>
-                    <strong>{result.feature_dim}</strong>
+                    <span>{isParallelResult ? "Fusion method" : "Feature dimension"}</span>
+                    <strong>{isParallelResult ? (result.fusion_method || "quality_weighted_mean") : result.feature_dim}</strong>
                   </div>
                   <div className="metric-box">
                     <span>Vote strength</span>
@@ -1754,6 +1869,26 @@ export default function Home() {
                     <strong>{modelQualityPercent}</strong>
                   </div>
                 </div>
+
+                {isParallelResult ? (
+                  <div className="parallel-result-grid">
+                    {result.per_approach?.map((item) => (
+                      <div key={item.approach_label} className="parallel-result-card">
+                        <div className="parallel-result-card-top">
+                          <strong>{item.approach_label}</strong>
+                          <span>{item.extractor}</span>
+                        </div>
+                        <div className="parallel-result-card-metrics">
+                          <em>{item.label}</em>
+                          <em>P(MSI-H) {(item.probability * 100).toFixed(2)}%</em>
+                          <em>Threshold {(item.threshold * 100).toFixed(2)}%</em>
+                          <em>AUROC {typeof item.mean_auroc === "number" ? item.mean_auroc.toFixed(4) : "-"}</em>
+                          <em>{item.checkpoint_count} checkpoints</em>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : null}
 
                 <div className="technical-panel">
                   <div className="technical-panel-header">
@@ -1772,6 +1907,7 @@ export default function Home() {
                     <table className="checkpoint-table">
                       <thead>
                         <tr>
+                          {isParallelResult ? <th>Approach</th> : null}
                           <th>Checkpoint</th>
                           <th>Repeat</th>
                           <th>Fold</th>
@@ -1785,7 +1921,8 @@ export default function Home() {
                       </thead>
                       <tbody>
                         {result.per_checkpoint.map((item) => (
-                          <tr key={item.checkpoint}>
+                          <tr key={`${item.approach_label || "single"}-${item.checkpoint}-${item.repeat}-${item.fold}`}>
+                            {isParallelResult ? <td>{item.approach_label || "-"}</td> : null}
                             <td>{item.checkpoint.replace("_best_valid.pth", "")}</td>
                             <td>{item.repeat}</td>
                             <td>{item.fold}</td>
@@ -2192,8 +2329,8 @@ export default function Home() {
                         <strong>{activeHistoryDetail.confidencePercent}</strong>
                       </div>
                       <div className="metric-box">
-                        <span>Tiles used</span>
-                        <strong>{activeHistoryDetail.result.tile_count}</strong>
+                        <span>{activeHistoryDetail.result.per_approach?.length ? "Bags included" : "Tiles used"}</span>
+                        <strong>{activeHistoryDetail.result.per_approach?.length ? (activeHistoryDetail.result.feature_bag_count || activeHistoryDetail.result.per_approach.length) : activeHistoryDetail.result.tile_count}</strong>
                       </div>
                       <div className="metric-box">
                         <span>MSI-H probability</span>
@@ -2204,12 +2341,12 @@ export default function Home() {
                         <strong>{activeHistoryDetail.thresholdPercent}</strong>
                       </div>
                       <div className="metric-box">
-                        <span>Ensemble checkpoints</span>
+                        <span>{activeHistoryDetail.result.per_approach?.length ? "Total checkpoints" : "Ensemble checkpoints"}</span>
                         <strong>{activeHistoryDetail.result.checkpoint_count}</strong>
                       </div>
                       <div className="metric-box">
-                        <span>Feature dimension</span>
-                        <strong>{activeHistoryDetail.result.feature_dim}</strong>
+                        <span>{activeHistoryDetail.result.per_approach?.length ? "Fusion method" : "Feature dimension"}</span>
+                        <strong>{activeHistoryDetail.result.per_approach?.length ? (activeHistoryDetail.result.fusion_method || "quality_weighted_mean") : activeHistoryDetail.result.feature_dim}</strong>
                       </div>
                       <div className="metric-box">
                         <span>Vote strength</span>
@@ -2220,6 +2357,26 @@ export default function Home() {
                         <strong>{activeHistoryDetail.modelQualityPercent}</strong>
                       </div>
                     </div>
+
+                    {activeHistoryDetail.result.per_approach?.length ? (
+                      <div className="parallel-result-grid">
+                        {activeHistoryDetail.result.per_approach.map((item) => (
+                          <div key={item.approach_label} className="parallel-result-card">
+                            <div className="parallel-result-card-top">
+                              <strong>{item.approach_label}</strong>
+                              <span>{item.extractor}</span>
+                            </div>
+                            <div className="parallel-result-card-metrics">
+                              <em>{item.label}</em>
+                              <em>P(MSI-H) {(item.probability * 100).toFixed(2)}%</em>
+                              <em>Threshold {(item.threshold * 100).toFixed(2)}%</em>
+                              <em>AUROC {typeof item.mean_auroc === "number" ? item.mean_auroc.toFixed(4) : "-"}</em>
+                              <em>{item.checkpoint_count} checkpoints</em>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
 
                     <div className="technical-panel">
                       <div className="technical-panel-header">
@@ -2238,6 +2395,7 @@ export default function Home() {
                         <table className="checkpoint-table">
                           <thead>
                             <tr>
+                              {activeHistoryDetail.result.per_approach?.length ? <th>Approach</th> : null}
                               <th>Checkpoint</th>
                               <th>Repeat</th>
                               <th>Fold</th>
@@ -2251,7 +2409,8 @@ export default function Home() {
                           </thead>
                           <tbody>
                             {activeHistoryDetail.result.per_checkpoint.map((checkpoint) => (
-                              <tr key={`${checkpoint.checkpoint}-${checkpoint.repeat}-${checkpoint.fold}`}>
+                              <tr key={`${checkpoint.approach_label || "single"}-${checkpoint.checkpoint}-${checkpoint.repeat}-${checkpoint.fold}`}>
+                                {activeHistoryDetail.result.per_approach?.length ? <td>{checkpoint.approach_label || "-"}</td> : null}
                                 <td>{checkpoint.checkpoint.replace("_best_valid.pth", "")}</td>
                                 <td>{checkpoint.repeat}</td>
                                 <td>{checkpoint.fold}</td>
@@ -2880,7 +3039,7 @@ export default function Home() {
               ))}
             </div>
             <p className="loading-note">
-              Live progress comes from the backend job stream. Fast mode uses a lighter local pass; exact mode follows the preserved training-matched path.
+              Live progress comes from the backend job stream. Exact mode follows the preserved training-matched path, and parallel offline mode scores a packaged four-bag input without retraining.
             </p>
           </div>
         </div>

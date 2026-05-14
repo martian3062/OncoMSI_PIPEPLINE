@@ -37,9 +37,7 @@ def _set_job(job_id: str, **changes: Any) -> None:
 
 
 def _job_weight_for_mode(pipeline_mode: str) -> int:
-    if str(pipeline_mode).strip().lower() == "manager1":
-        return max(1, int(getattr(settings, "MSI_EXACT_JOB_WEIGHT", 2) or 2))
-    return max(1, int(getattr(settings, "MSI_FAST_JOB_WEIGHT", 1) or 1))
+    return max(1, int(getattr(settings, "MSI_EXACT_JOB_WEIGHT", 2) or 2))
 
 
 def _job_capacity_limit() -> int:
@@ -53,7 +51,7 @@ def _queue_position_locked(job_id: str, pipeline_mode: str) -> int:
         if queued_job.get("job_id") == job_id:
             break
         if queued_job.get("status") == "queued":
-            ahead += _job_weight_for_mode(str(queued_job.get("pipeline_mode") or "manager2"))
+            ahead += _job_weight_for_mode(str(queued_job.get("pipeline_mode") or "manager1"))
     if ahead <= 0:
         return 1
     return 1 + (ahead // max(target_weight, 1))
@@ -63,7 +61,7 @@ def _update_waiting_jobs_locked() -> None:
     for job in _JOBS.values():
         if job.get("status") != "queued":
             continue
-        queue_position = _queue_position_locked(str(job.get("job_id") or ""), str(job.get("pipeline_mode") or "manager2"))
+        queue_position = _queue_position_locked(str(job.get("job_id") or ""), str(job.get("pipeline_mode") or "manager1"))
         job["progress"] = {
             "stage": "queued",
             "label": "Queued",
@@ -133,6 +131,8 @@ def _run_prediction_job(
         "generate_bag": "Feature bag generation",
         "load_bag": "Feature bag load",
         "decode_image": "Image decode",
+        "parallel_package": "Parallel package loading",
+        "parallel_scoring": "Parallel ensemble scoring",
         "encode_tiles": "Virchow2 encoding",
         "features_ready": "Features ready",
         "ensemble_scoring": "TransMIL ensemble scoring",
