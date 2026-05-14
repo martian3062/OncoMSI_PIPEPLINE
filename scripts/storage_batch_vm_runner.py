@@ -66,6 +66,7 @@ def choose_batch(
     first_n: int,
     preferred_exact_suffix: str,
     preferred_slide_pattern: str,
+    dedupe_patients: bool,
 ) -> list[dict[str, Any]]:
     exact_map = {row["stem"]: row for row in bucket_files}
     patient_map: dict[str, list[dict[str, str]]] = {}
@@ -78,7 +79,9 @@ def choose_batch(
         if len(selected) >= first_n:
             break
         patient = str(row.get("patient") or "").strip().upper()
-        if not patient or patient in seen_patients:
+        if not patient:
+            continue
+        if dedupe_patients and patient in seen_patients:
             continue
         slide_stem = normalize_stem(str(row.get("slide") or ""))
         match = exact_map.get(slide_stem)
@@ -93,7 +96,8 @@ def choose_batch(
                 match = preferred[0]
         if match is None:
             continue
-        seen_patients.add(patient)
+        if dedupe_patients:
+            seen_patients.add(patient)
         selected.append(
             {
                 "patient": patient,
@@ -322,6 +326,7 @@ def main() -> int:
     parser.add_argument("--job-timeout-seconds", type=int, default=900)
     parser.add_argument("--fallback-mode", default="fast")
     parser.add_argument("--django-python", default="/home/pardeep/.venvs/pathology310-hybrid/bin/python")
+    parser.add_argument("--allow-duplicate-patients", action="store_true")
     args = parser.parse_args()
 
     annotations_csv = Path(args.annotations_csv).expanduser().resolve()
@@ -337,6 +342,7 @@ def main() -> int:
         args.first_n,
         args.preferred_exact_suffix,
         args.preferred_slide_pattern,
+        dedupe_patients=not args.allow_duplicate_patients,
     )
     if not matched_rows:
         raise RuntimeError("No matched rows were selected for this batch.")
