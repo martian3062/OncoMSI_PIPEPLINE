@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-{% load static %}
 <html lang="en">
 <head>
   <meta charset="utf-8">
@@ -8,22 +7,12 @@
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <link rel="stylesheet" href="{% static 'core/app.css' %}?v={{ asset_version }}">
+  {% block extra_head %}{% endblock %}
 </head>
 <body>
-  <div class="page-shell">
-    <header class="site-header">
-      <div>
-        <p class="eyebrow">OncoMSI</p>
-        <h1>{{ app_name }}</h1>
-      </div>
-      <nav class="site-nav">
-        <a href="{% url 'results-page' %}">Results</a>
-      </nav>
-    </header>
-    <main class="page-main">
-      {% block content %}{% endblock %}
-    </main>
-  </div>
+  <main class="page-main">
+    {% block content %}{% endblock %}
+  </main>
+  {% block extra_scripts %}{% endblock %}
 </body>
 </html>

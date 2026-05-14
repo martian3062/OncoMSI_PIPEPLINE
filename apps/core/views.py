@@ -1,25 +1,36 @@
+import ctypes
+from collections import Counter
 import json
+import os
+import platform
 import re
 import shlex
+import shutil
+import socket
+import subprocess
+import sys
+import tempfile
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 
 from django.conf import settings
 from django.db.models import Q
-from django.http import HttpRequest, HttpResponse
-from django.shortcuts import redirect, render
+from django.http import HttpRequest, HttpResponse, JsonResponse
+from django.shortcuts import redirect
 from django.utils import timezone
+from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_GET, require_POST
 import plotly.graph_objects as go
+import torch
 
-from apps.approaches.registry import build_approach_slots
-from apps.archives.models import BatchArchive
 from apps.runs.models import Run
-from apps.runs.services import create_run_from_payload, dashboard_summary
+from apps.runs.services import create_run_from_payload
 from apps.runs.vm_runtime import sync_run_status
 from apps.vm.services import default_vm_target, run_shell
-from .results_beta import build_results_beta_context
-from .services import integration_summary
+from .inference import get_inference_metadata, predict_upload
+from .library_data import compact_prediction_history_rows, compact_storage_manifest, delete_prediction_history_entry, find_storage_sample, load_prediction_history, load_storage_manifest
+from .predict_jobs import create_prediction_job, create_prediction_job_from_path, get_prediction_job
 
 
 STATE_LABELS = {
@@ -71,6 +82,20 @@ METRIC_FIELDS = [
     ("MSI-H Recall", "mean_recall_msi_h"),
     ("Specificity", "mean_specificity"),
 ]
+
+
+def _next_app_url(path: str = "/") -> str:
+    base = str(getattr(settings, "NEXT_APP_URL", "http://127.0.0.1:3000") or "http://127.0.0.1:3000").rstrip("/")
+    clean_path = path if path.startswith("/") else f"/{path}"
+    return f"{base}{clean_path}"
+
+
+def frontend_redirect(request: HttpRequest) -> HttpResponse:
+    return redirect(_next_app_url("/"))
+
+
+def retired_frontend_partial(request: HttpRequest) -> HttpResponse:
+    return HttpResponse(status=204)
 
 
 def _clock_delta_seconds(start: str, end: str) -> int | None:
@@ -170,6 +195,324 @@ def _duration_to_seconds(value: str) -> int | None:
     except ValueError:
         return None
     return minutes * 60 + seconds
+
+
+def _tail_text_lines(path: Path, limit: int = 80) -> list[str]:
+    if not path.exists():
+        return []
+    lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+    return [line for line in lines[-limit:] if str(line).strip()]
+
+
+def _count_jsonl_rows(path: Path) -> int:
+    if not path.exists():
+        return 0
+    return sum(1 for line in path.read_text(encoding="utf-8", errors="ignore").splitlines() if line.strip())
+
+
+def _load_json_count(path: Path) -> int:
+    if not path.exists():
+        return 0
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return 0
+    if isinstance(payload, list):
+        return len(payload)
+    return 0
+
+
+def _runtime_batch_status() -> dict:
+    runtime_root = Path(settings.BASE_DIR) / "runtime" / "storage_batches"
+    if not runtime_root.exists():
+        return {
+            "has_active_batch": False,
+            "batch_name": "",
+            "phase": "idle",
+            "phase_label": "Idle",
+            "current_index": 0,
+            "total": 0,
+            "completed": 0,
+            "percent": 0,
+            "current_file": "",
+            "queued_batches": [],
+            "updated_at": timezone.now().isoformat(),
+        }
+
+    try:
+        process_result = subprocess.run(
+            ["pgrep", "-af", "storage_batch_vm_runner.py"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        process_lines = [line.strip() for line in process_result.stdout.splitlines() if line.strip()]
+    except Exception:
+        process_lines = []
+
+    active_batch_name = ""
+    for line in process_lines:
+        match = re.search(r"--batch-name\s+([A-Za-z0-9._-]+)", line)
+        if match:
+            active_batch_name = match.group(1).strip()
+            break
+
+    batch_dirs = [path for path in runtime_root.iterdir() if path.is_dir()]
+    batch_dirs.sort(key=lambda item: item.stat().st_mtime, reverse=True)
+    batch_map = {path.name: path for path in batch_dirs}
+
+    active_dir = batch_map.get(active_batch_name)
+    if active_dir is None:
+        for candidate in batch_dirs:
+            summary_path = candidate / "summary.json"
+            selected_count = _load_json_count(candidate / "selected_rows.json")
+            summary_count = 0
+            if summary_path.exists():
+                try:
+                    summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
+                    summary_count = int(summary_payload.get("count") or 0) if isinstance(summary_payload, dict) else 0
+                except Exception:
+                    summary_count = 0
+            if selected_count and summary_count < selected_count:
+                active_dir = candidate
+                active_batch_name = candidate.name
+                break
+
+    queued_batches: list[str] = []
+    for candidate in batch_dirs:
+        if candidate.name == active_batch_name:
+            continue
+        selected_count = _load_json_count(candidate / "selected_rows.json")
+        result_count = _count_jsonl_rows(candidate / "prediction_results.jsonl")
+        if selected_count and result_count < selected_count:
+            queued_batches.append(candidate.name)
+            continue
+        has_autostart = any(candidate.glob("autostart_after_*.sh"))
+        has_runner = (candidate / "runner.log").exists()
+        if has_autostart and not has_runner:
+            queued_batches.append(candidate.name)
+
+    if active_dir is None:
+        return {
+            "has_active_batch": False,
+            "batch_name": "",
+            "phase": "idle",
+            "phase_label": "Idle",
+            "current_index": 0,
+            "total": 0,
+            "completed": 0,
+            "percent": 0,
+            "current_file": "",
+            "queued_batches": queued_batches,
+            "updated_at": timezone.now().isoformat(),
+        }
+
+    selected_count = _load_json_count(active_dir / "selected_rows.json")
+    completed_count = _count_jsonl_rows(active_dir / "prediction_results.jsonl")
+    phase = "preparing"
+    phase_label = "Preparing"
+    current_index = min(completed_count, selected_count)
+    current_file = ""
+    log_lines = _tail_text_lines(active_dir / "runner.log")
+    for line in reversed(log_lines):
+        download_match = re.search(r"\[download\s+(\d+)/(\d+)\]\s+(.+)$", line)
+        if download_match:
+            phase = "downloading"
+            phase_label = "Downloading slides"
+            current_index = int(download_match.group(1))
+            selected_count = max(selected_count, int(download_match.group(2)))
+            current_file = download_match.group(3).strip()
+            break
+        predict_match = re.search(r"\[(?:predict|skip|timeout|fallback)\s+(\d+)/(\d+)\]\s+(.+?)(?:\s+mode=.*)?$", line)
+        if predict_match:
+            phase = "predicting"
+            phase_label = "Running predictions"
+            current_index = int(predict_match.group(1))
+            selected_count = max(selected_count, int(predict_match.group(2)))
+            current_file = predict_match.group(3).strip()
+            break
+        done_match = re.search(r"\[done\]\s+batch=([A-Za-z0-9._-]+)\s+slides=(\d+)", line)
+        if done_match:
+            phase = "completed"
+            phase_label = "Completed"
+            current_index = int(done_match.group(2))
+            selected_count = max(selected_count, current_index)
+            current_file = ""
+            break
+
+    if phase == "predicting":
+        percent = int(round((completed_count / max(1, selected_count)) * 100))
+    elif phase == "downloading":
+        percent = int(round((current_index / max(1, selected_count)) * 100))
+    elif phase == "completed":
+        percent = 100
+    else:
+        percent = int(round((completed_count / max(1, selected_count)) * 100)) if selected_count else 0
+
+    return {
+        "has_active_batch": True,
+        "batch_name": active_batch_name,
+        "phase": phase,
+        "phase_label": phase_label,
+        "current_index": current_index,
+        "total": selected_count,
+        "completed": completed_count,
+        "percent": max(0, min(100, percent)),
+        "current_file": current_file,
+        "queued_batches": queued_batches,
+        "updated_at": timezone.now().isoformat(),
+    }
+
+
+def _slide_type_for_name(name: str) -> str:
+    upper = str(name or "").strip().upper()
+    if not upper:
+        return ""
+    stem = upper[:-4] if upper.endswith(".SVS") else upper
+    for part in stem.split("-"):
+        if part.startswith(("DX", "TS", "BS", "MS")):
+            return part.split(".")[0]
+    return ""
+
+
+def _batch_progress_rows() -> list[dict[str, Any]]:
+    runtime_root = Path(settings.BASE_DIR) / "runtime" / "storage_batches"
+    if not runtime_root.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for batch_dir in sorted((path for path in runtime_root.iterdir() if path.is_dir()), key=lambda item: item.name):
+        selected_count = _load_json_count(batch_dir / "selected_rows.json")
+        completed_count = _count_jsonl_rows(batch_dir / "prediction_results.jsonl")
+        watcher = next(batch_dir.glob("autostart_after_*.sh"), None)
+        rows.append(
+            {
+                "batch_name": batch_dir.name,
+                "selected_total": selected_count,
+                "completed_total": completed_count,
+                "status": "completed" if selected_count and completed_count >= selected_count else "queued" if watcher and not (batch_dir / "runner.log").exists() else "running" if (batch_dir / "runner.log").exists() else "idle",
+                "has_autostart": bool(watcher),
+            }
+        )
+    return rows
+
+
+def _history_analysis_payload() -> dict[str, Any]:
+    rows = load_prediction_history(limit=None)
+    scored_rows = [
+        item
+        for item in rows
+        if str(item.get("label") or "") in {"MSS", "MSI-H"}
+        and str(item.get("expected_label") or "") in {"MSS", "MSI-H"}
+    ]
+    total = len(scored_rows)
+    correct = sum(1 for item in scored_rows if str(item.get("label") or "") == str(item.get("expected_label") or ""))
+    wrong = total - correct
+    false_positive = sum(1 for item in scored_rows if str(item.get("expected_label") or "") == "MSS" and str(item.get("label") or "") == "MSI-H")
+    false_negative = sum(1 for item in scored_rows if str(item.get("expected_label") or "") == "MSI-H" and str(item.get("label") or "") == "MSS")
+    type_counter = Counter(_slide_type_for_name(str(item.get("uploaded_name") or "")) or "Unknown" for item in scored_rows)
+    confidence_counter = Counter(str(item.get("confidence_level") or "Unknown") for item in scored_rows)
+    source_groups = sorted({str(item.get("source_group") or "Unknown") for item in scored_rows})
+    by_source_group: list[dict[str, Any]] = []
+    for group in source_groups:
+        group_rows = [item for item in scored_rows if str(item.get("source_group") or "Unknown") == group]
+        group_total = len(group_rows)
+        group_correct = sum(1 for item in group_rows if str(item.get("label") or "") == str(item.get("expected_label") or ""))
+        by_source_group.append(
+            {
+                "name": group,
+                "total": group_total,
+                "correct": group_correct,
+                "wrong": group_total - group_correct,
+                "accuracy": round((group_correct / group_total) if group_total else 0.0, 4),
+            }
+        )
+    by_slide_type: list[dict[str, Any]] = []
+    for slide_type in sorted(type_counter):
+        type_rows = [item for item in scored_rows if (_slide_type_for_name(str(item.get("uploaded_name") or "")) or "Unknown") == slide_type]
+        type_total = len(type_rows)
+        type_correct = sum(1 for item in type_rows if str(item.get("label") or "") == str(item.get("expected_label") or ""))
+        by_slide_type.append(
+            {
+                "name": slide_type,
+                "total": type_total,
+                "correct": type_correct,
+                "wrong": type_total - type_correct,
+                "accuracy": round((type_correct / type_total) if type_total else 0.0, 4),
+            }
+        )
+    by_pipeline_mode: list[dict[str, Any]] = []
+    for mode in sorted({str(item.get("pipeline_mode") or "unknown") for item in scored_rows}):
+        mode_rows = [item for item in scored_rows if str(item.get("pipeline_mode") or "unknown") == mode]
+        mode_total = len(mode_rows)
+        mode_correct = sum(1 for item in mode_rows if str(item.get("label") or "") == str(item.get("expected_label") or ""))
+        by_pipeline_mode.append(
+            {
+                "name": mode,
+                "total": mode_total,
+                "correct": mode_correct,
+                "wrong": mode_total - mode_correct,
+                "accuracy": round((mode_correct / mode_total) if mode_total else 0.0, 4),
+            }
+        )
+    recent_wrong = []
+    for item in scored_rows:
+        if str(item.get("label") or "") == str(item.get("expected_label") or ""):
+            continue
+        recent_wrong.append(
+            {
+                "uploaded_name": item.get("uploaded_name"),
+                "patient": item.get("patient"),
+                "expected_label": item.get("expected_label"),
+                "label": item.get("label"),
+                "probability": item.get("probability"),
+                "confidence_level": item.get("confidence_level"),
+                "source_group": item.get("source_group"),
+                "saved_at": item.get("saved_at"),
+                "slide_type": _slide_type_for_name(str(item.get("uploaded_name") or "")) or "Unknown",
+            }
+        )
+    recent_wrong.sort(key=lambda item: str(item.get("saved_at") or ""), reverse=True)
+    inference_meta = get_inference_metadata()
+    return {
+        "overview": {
+            "total_scored": total,
+            "correct": correct,
+            "wrong": wrong,
+            "accuracy": round((correct / total) if total else 0.0, 4),
+            "false_positive": false_positive,
+            "false_negative": false_negative,
+            "type_i_error": false_positive,
+            "type_ii_error": false_negative,
+        },
+        "confusion": {
+            "MSS_to_MSS": sum(1 for item in scored_rows if str(item.get("expected_label") or "") == "MSS" and str(item.get("label") or "") == "MSS"),
+            "MSS_to_MSI_H": false_positive,
+            "MSI_H_to_MSI_H": sum(1 for item in scored_rows if str(item.get("expected_label") or "") == "MSI-H" and str(item.get("label") or "") == "MSI-H"),
+            "MSI_H_to_MSS": false_negative,
+        },
+        "by_source_group": by_source_group,
+        "by_slide_type": by_slide_type,
+        "by_pipeline_mode": by_pipeline_mode,
+        "confidence_distribution": [
+            {"name": level, "count": confidence_counter[level]}
+            for level in ["High", "Medium", "Low", "Unknown"]
+            if confidence_counter[level]
+        ],
+        "batch_progress": _batch_progress_rows(),
+        "current_model": {
+            "pipeline_mode": inference_meta.get("pipeline_mode"),
+            "pipeline_style": inference_meta.get("pipeline_style"),
+            "approach_label": inference_meta.get("approach_label"),
+            "mil_model": inference_meta.get("mil_model"),
+            "encoder_label": (inference_meta.get("encoder") or {}).get("encoder_label"),
+            "feature_dim": inference_meta.get("feature_dim"),
+            "selected_checkpoint_count": inference_meta.get("selected_checkpoint_count"),
+            "available_checkpoints": inference_meta.get("available_checkpoints"),
+            "mean_threshold": inference_meta.get("mean_threshold"),
+        },
+        "recent_wrong_cases": recent_wrong[:12],
+        "updated_at": timezone.now().isoformat(),
+    }
 
 
 def _slugish(value: str) -> str:
@@ -860,113 +1203,415 @@ def hydrate_run(run: Run, *, allow_sync_failure: bool, sync_remote: bool) -> Run
 
 
 def dashboard(request: HttpRequest) -> HttpResponse:
-    summary = dashboard_summary()
-    live_runs = hydrate_live_runs(sync_remote=False)
-    recent_runs = hydrate_recent_runs(sync_remote=False, limit=8)
-    milestone_items = build_milestone_items(live_runs)
-    initial_tab = "history" if request.GET.get("tab") == "history" else "live"
-    history_runs = hydrate_history_runs() if initial_tab == "history" else []
-    archive_records = BatchArchive.objects.order_by("-updated_at")[:8] if initial_tab == "history" else []
-    context = {
-        "summary": summary,
-        "approach_slots": build_approach_slots(),
-        "chart_json": json.dumps(summary["chart"]),
-        "recent_runs": recent_runs,
-        "live_runs": live_runs,
-        "history_runs": history_runs,
-        "archive_records": archive_records,
-        "integrations": integration_summary(),
-        "initial_tab": initial_tab,
-        "milestone_items": milestone_items,
-        "milestone_items_json": json.dumps(milestone_items),
-    }
-    return render(request, "core/dashboard.html", context)
+    return frontend_redirect(request)
 
 
 @require_GET
 def dashboard_metrics_partial(request: HttpRequest) -> HttpResponse:
-    summary = dashboard_summary()
-    return render(
-        request,
-        "core/partials/metrics_panel.html",
-        {
-            "summary": summary,
-            "chart_json": json.dumps(summary["chart"]),
-        },
-    )
+    return retired_frontend_partial(request)
 
 
 @require_GET
 def live_runs_partial(request: HttpRequest) -> HttpResponse:
-    live_runs = hydrate_live_runs(sync_remote=True)
-    return render(
-        request,
-        "core/partials/live_runs_panel.html",
-        {
-            "live_runs": live_runs,
-        },
-    )
+    return retired_frontend_partial(request)
 
 
 @require_GET
 def milestone_ticker_partial(request: HttpRequest) -> HttpResponse:
-    live_runs = hydrate_live_runs(sync_remote=False)
-    milestone_items = build_milestone_items(live_runs)
-    return render(
-        request,
-        "core/partials/milestone_ticker.html",
-        {
-            "milestone_items": milestone_items,
-            "milestone_items_json": json.dumps(milestone_items),
-        },
-    )
+    return retired_frontend_partial(request)
 
 
 @require_GET
 def history_partial(request: HttpRequest) -> HttpResponse:
-    return render(
-        request,
-        "core/partials/history_panel.html",
-        {
-            "history_runs": hydrate_history_runs(),
-            "archive_records": BatchArchive.objects.order_by("-updated_at")[:8],
-        },
-    )
+    return retired_frontend_partial(request)
 
 
 @require_GET
 def history_page(request: HttpRequest) -> HttpResponse:
-    summary = dashboard_summary()
-    live_runs = hydrate_live_runs(sync_remote=False)
-    recent_runs = hydrate_recent_runs(sync_remote=False, limit=12)
-    milestone_items = build_milestone_items(live_runs)
-    context = {
-        "summary": summary,
-        "approach_slots": build_approach_slots(),
-        "chart_json": json.dumps(summary["chart"]),
-        "recent_runs": recent_runs,
-        "live_runs": live_runs,
-        "history_runs": hydrate_history_runs(limit=30),
-        "archive_records": BatchArchive.objects.order_by("-updated_at")[:20],
-        "integrations": integration_summary(),
-        "initial_tab": "history",
-        "milestone_items": milestone_items,
-        "milestone_items_json": json.dumps(milestone_items),
-    }
-    return render(request, "core/dashboard.html", context)
+    return frontend_redirect(request)
 
 
 @require_GET
 def results_beta_page(request: HttpRequest) -> HttpResponse:
-    context = {
-        "results_beta": build_results_beta_context(),
+    return redirect(_next_app_url("/"))
+
+
+def _predict_uploaded_file(uploaded) -> dict:
+    if uploaded is None:
+        raise ValueError("Choose a slide, image, or trusted feature bag first.")
+    temp_path = None
+    try:
+        suffix = Path(uploaded.name).suffix
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
+            for chunk in uploaded.chunks():
+                handle.write(chunk)
+            temp_path = Path(handle.name)
+        result = predict_upload(temp_path)
+        result["uploaded_name"] = uploaded.name
+        return result
+    finally:
+        if temp_path and temp_path.exists():
+            temp_path.unlink(missing_ok=True)
+
+
+def _bytes_to_gib(value: int) -> float:
+    return round(value / float(1024**3), 2)
+
+
+def _ram_snapshot() -> dict:
+    try:
+        if sys.platform.startswith("linux"):
+            page_size = os.sysconf("SC_PAGE_SIZE")
+            total_pages = os.sysconf("SC_PHYS_PAGES")
+            avail_pages = os.sysconf("SC_AVPHYS_PAGES")
+            total = int(page_size * total_pages)
+            available = int(page_size * avail_pages)
+            return {
+                "total_gib": _bytes_to_gib(total),
+                "available_gib": _bytes_to_gib(available),
+                "used_gib": _bytes_to_gib(max(total - available, 0)),
+            }
+        if sys.platform.startswith("win"):
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("sullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            state = MEMORYSTATUSEX()
+            state.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(state)):
+                total = int(state.ullTotalPhys)
+                available = int(state.ullAvailPhys)
+                return {
+                    "total_gib": _bytes_to_gib(total),
+                    "available_gib": _bytes_to_gib(available),
+                    "used_gib": _bytes_to_gib(max(total - available, 0)),
+                }
+    except Exception:
+        pass
+    return {"total_gib": None, "available_gib": None, "used_gib": None}
+
+
+def _gpu_snapshot() -> dict:
+    payload = {
+        "cuda_available": bool(torch.cuda.is_available()),
+        "device_count": int(torch.cuda.device_count()) if torch.cuda.is_available() else 0,
+        "name": "",
+        "memory_total_gib": None,
+        "memory_reserved_gib": None,
+        "memory_allocated_gib": None,
+        "driver_line": "",
     }
-    return render(request, "core/results_beta.html", context)
+    if torch.cuda.is_available():
+        try:
+            device = torch.cuda.current_device()
+            props = torch.cuda.get_device_properties(device)
+            payload["name"] = props.name
+            payload["memory_total_gib"] = _bytes_to_gib(int(props.total_memory))
+            payload["memory_reserved_gib"] = _bytes_to_gib(int(torch.cuda.memory_reserved(device)))
+            payload["memory_allocated_gib"] = _bytes_to_gib(int(torch.cuda.memory_allocated(device)))
+        except Exception:
+            pass
+    try:
+        if shutil.which("nvidia-smi"):
+            result = subprocess.run(
+                ["nvidia-smi", "--query-gpu=driver_version,name", "--format=csv,noheader"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
+            )
+            line = (result.stdout or "").strip().splitlines()
+            if line:
+                payload["driver_line"] = line[0].strip()
+    except Exception:
+        pass
+    return payload
 
 
+def _system_profile() -> dict:
+    from .inference import _pipeline_mode
+
+    disk = shutil.disk_usage(settings.BASE_DIR)
+    ram = _ram_snapshot()
+    gpu = _gpu_snapshot()
+    return {
+        "hostname": socket.gethostname(),
+        "system": platform.system(),
+        "release": platform.release(),
+        "machine": platform.machine(),
+        "python_version": platform.python_version(),
+        "platform_summary": platform.platform(),
+        "base_dir": str(settings.BASE_DIR),
+        "disk_total_gib": _bytes_to_gib(disk.total),
+        "disk_free_gib": _bytes_to_gib(disk.free),
+        "disk_used_gib": _bytes_to_gib(disk.used),
+        "ram": ram,
+        "gpu": gpu,
+        "prefer_device": getattr(settings, "MSI_PREFER_DEVICE", "auto"),
+        "pipeline_mode": _pipeline_mode(),
+        "max_inference_tiles": int(getattr(settings, "MSI_MAX_INFERENCE_TILES", 24) or 24),
+    }
+
+
+def _requested_predict_mode(request: HttpRequest) -> str:
+    raw = (
+        request.GET.get("mode")
+        or request.POST.get("mode")
+        or request.headers.get("X-Predict-Mode")
+        or ""
+    ).strip().lower()
+    if raw == "fast":
+        return "manager2"
+    return "manager1"
+
+
+def _normalize_expected_label(value: str) -> str:
+    raw = (value or "").strip().upper()
+    if raw in {"MSI", "MSI-H", "MSIH"}:
+        return "MSI-H"
+    if raw == "MSS":
+        return "MSS"
+    return ""
+
+
+def _apply_prediction_cors(request: HttpRequest, response: HttpResponse) -> HttpResponse:
+    origin = str(request.headers.get("Origin") or "").rstrip("/")
+    allowed_origins = {
+        str(getattr(settings, "NEXT_APP_URL", "http://127.0.0.1:3000") or "http://127.0.0.1:3000").rstrip("/"),
+        "http://127.0.0.1:3000",
+        "http://localhost:3000",
+        "http://34.126.112.227:3000",
+    }
+    if origin and origin in allowed_origins:
+        response["Access-Control-Allow-Origin"] = origin
+        response["Vary"] = "Origin"
+        response["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+        response["Access-Control-Allow-Headers"] = "Content-Type, X-Predict-Mode"
+    return response
+
+
+@require_GET
+def predict_metadata_api(request: HttpRequest) -> JsonResponse:
+    from .inference import temporary_pipeline_mode
+
+    with temporary_pipeline_mode(_requested_predict_mode(request)):
+        return _apply_prediction_cors(request, JsonResponse(
+            {
+                "inference": get_inference_metadata(),
+                "system": _system_profile(),
+            }
+        ))
+
+
+@csrf_exempt
 @require_POST
+def predict_job_create_api(request: HttpRequest) -> JsonResponse:
+    uploaded = request.FILES.get("prediction_input")
+    if uploaded is None:
+        return _apply_prediction_cors(request, JsonResponse({"error": "Choose a slide, image, or trusted feature bag first."}, status=400))
+    expected_label = _normalize_expected_label(str(request.POST.get("expected_label") or ""))
+    try:
+        payload = create_prediction_job(
+            uploaded,
+            _requested_predict_mode(request),
+            history_context={"expected_label": expected_label} if expected_label else None,
+        )
+    except Exception as exc:
+        return _apply_prediction_cors(request, JsonResponse({"error": str(exc).strip() or "Could not create prediction job."}, status=400))
+    return _apply_prediction_cors(request, JsonResponse(payload, status=202))
+
+
+@require_GET
+def predict_job_status_api(request: HttpRequest, job_id: str) -> JsonResponse:
+    payload = get_prediction_job(job_id)
+    if payload is None:
+        return _apply_prediction_cors(request, JsonResponse({"error": "Prediction job not found."}, status=404))
+    if payload.get("status") == "completed":
+        from .inference import temporary_pipeline_mode
+
+        with temporary_pipeline_mode(str(payload.get("pipeline_mode") or "manager1")):
+            payload["inference"] = get_inference_metadata()
+            payload["system"] = _system_profile()
+    return _apply_prediction_cors(request, JsonResponse(payload))
+
+
+@require_GET
+def storage_samples_api(request: HttpRequest) -> JsonResponse:
+    payload = load_storage_manifest()
+    bucket_name = str(request.GET.get("bucket_name") or "").strip()
+    compact = str(request.GET.get("compact") or "").strip() == "1"
+    if bucket_name:
+        item = next((entry for entry in (payload.get("files", []) or []) if str(entry.get("bucket_name") or "") == bucket_name), None)
+        if not item:
+            return _apply_prediction_cors(request, JsonResponse({"error": "Stored sample not found."}, status=404))
+        return _apply_prediction_cors(request, JsonResponse(item))
+    if compact:
+        payload = compact_storage_manifest(payload)
+    return _apply_prediction_cors(request, JsonResponse(payload))
+
+
+@require_GET
+def batch_status_api(request: HttpRequest) -> JsonResponse:
+    return _apply_prediction_cors(request, JsonResponse(_runtime_batch_status()))
+
+
+@require_GET
+def analysis_summary_api(request: HttpRequest) -> JsonResponse:
+    return _apply_prediction_cors(request, JsonResponse(_history_analysis_payload()))
+
+
+@csrf_exempt
+def prediction_history_api(request: HttpRequest) -> JsonResponse:
+    if request.method not in {"GET", "DELETE"}:
+        return _apply_prediction_cors(request, JsonResponse({"error": "Method not allowed."}, status=405))
+    if request.method == "DELETE":
+        try:
+            payload = json.loads(request.body.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            payload = {}
+        job_id = str(payload.get("job_id") or "").strip()
+        saved_at = str(payload.get("saved_at") or "").strip()
+        uploaded_name = str(payload.get("uploaded_name") or "").strip()
+        deleted = delete_prediction_history_entry(job_id=job_id, saved_at=saved_at, uploaded_name=uploaded_name)
+        status = 200 if deleted else 404
+        return _apply_prediction_cors(request, JsonResponse({"deleted": deleted}, status=status))
+    raw_limit = str(request.GET.get("limit") or "").strip()
+    if raw_limit:
+        try:
+            limit = max(1, int(raw_limit))
+        except ValueError:
+            limit = None
+    else:
+        limit = None
+    rows = load_prediction_history(limit=limit)
+    job_id = str(request.GET.get("job_id") or "").strip()
+    saved_at = str(request.GET.get("saved_at") or "").strip()
+    uploaded_name = str(request.GET.get("uploaded_name") or "").strip()
+    compact = str(request.GET.get("compact") or "").strip() == "1"
+    if job_id or (saved_at and uploaded_name):
+        for item in rows:
+            if job_id and str(item.get("job_id") or "") == job_id:
+                return _apply_prediction_cors(request, JsonResponse(item))
+            if saved_at and uploaded_name and str(item.get("saved_at") or "") == saved_at and str(item.get("uploaded_name") or "") == uploaded_name:
+                return _apply_prediction_cors(request, JsonResponse(item))
+        return _apply_prediction_cors(request, JsonResponse({"error": "Saved result not found."}, status=404))
+    if compact:
+        rows = compact_prediction_history_rows(rows)
+    return _apply_prediction_cors(
+        request,
+        JsonResponse(
+            {
+                "count": len(rows),
+                "items": rows,
+            }
+        ),
+    )
+
+
+@csrf_exempt
+@require_POST
+def storage_sample_test_api(request: HttpRequest) -> JsonResponse:
+    bucket_name = str(request.POST.get("bucket_name") or "").strip()
+    if not bucket_name:
+        try:
+            payload = json.loads(request.body.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            payload = {}
+        bucket_name = str(payload.get("bucket_name") or "").strip()
+    if not bucket_name:
+        return _apply_prediction_cors(request, JsonResponse({"error": "Choose a stored sample first."}, status=400))
+    sample = find_storage_sample(bucket_name)
+    if not sample:
+        return _apply_prediction_cors(request, JsonResponse({"error": "Stored sample not found."}, status=404))
+    sample_path = Path(str(sample.get("local_vm_path") or "")).expanduser()
+    try:
+        job = create_prediction_job_from_path(
+            sample_path,
+            bucket_name,
+            _requested_predict_mode(request),
+            history_context={
+                "patient": sample.get("patient"),
+                "expected_label": sample.get("msi_status"),
+                "source_group": sample.get("source_group"),
+                "sample_bucket_name": sample.get("bucket_name"),
+            },
+        )
+    except Exception as exc:
+        return _apply_prediction_cors(request, JsonResponse({"error": str(exc).strip() or "Could not queue stored sample."}, status=400))
+    return _apply_prediction_cors(request, JsonResponse(job, status=202))
+
+
+def _monitor_eta(snapshot: dict) -> str:
+    approaches = snapshot.get("approaches") or []
+    workers = snapshot.get("workers") or []
+    if not approaches or not workers:
+        return "ETA pending"
+    total_done = sum(int(item.get("completed_count") or 0) for item in approaches)
+    total_expected = sum(int(item.get("total_expected") or 0) for item in approaches)
+    remaining = max(0, total_expected - total_done)
+    elapsed_seconds = max(int(item.get("elapsed_seconds") or 0) for item in workers) if workers else 0
+    if total_done <= 0 or elapsed_seconds <= 0:
+        return "ETA pending"
+    pace_per_minute = total_done / max(elapsed_seconds / 60.0, 1e-6)
+    eta_minutes = remaining / max(pace_per_minute, 1e-6)
+    if eta_minutes >= 60:
+        hours = int(eta_minutes // 60)
+        minutes = int(round(eta_minutes % 60))
+        return f"{hours}h {minutes}m remaining"
+    return f"{int(round(eta_minutes))}m remaining"
+
+
+def _monitor_cards(snapshot: dict) -> dict:
+    gpu = snapshot.get("gpu") or {}
+    ram = snapshot.get("ram") or {}
+    workers = snapshot.get("workers") or []
+    cpu_total = sum(float(item.get("cpu") or 0.0) for item in workers)
+    cpu_avg = cpu_total / len(workers) if workers else 0.0
+    return {
+        "gpu_util": gpu.get("utilization"),
+        "gpu_memory": f"{gpu.get('memory_used', 0)} / {gpu.get('memory_total', 0)} MiB" if gpu else "-",
+        "gpu_temp": gpu.get("temperature"),
+        "cpu_total": round(cpu_total, 1) if workers else None,
+        "cpu_avg": round(cpu_avg, 1) if workers else None,
+        "ram_used": f"{ram.get('used_gb', 0)} / {ram.get('total_gb', 0)} GB" if ram else "-",
+        "ram_available": ram.get("available_gb"),
+    }
+
+
+@require_GET
+def live_monitor_page(request: HttpRequest) -> HttpResponse:
+    return redirect(_next_app_url("/"))
+
+
 def results_beta_infer(request: HttpRequest) -> HttpResponse:
-    return redirect("results-beta-page")
+    return redirect(_next_app_url("/"))
+
+
+@csrf_exempt
+@require_POST
+def predict_upload_api(request: HttpRequest) -> JsonResponse:
+    uploaded = request.FILES.get("prediction_input")
+    if uploaded is None:
+        return _apply_prediction_cors(request, JsonResponse({"error": "Choose a slide, image, or trusted feature bag first."}, status=400))
+    from .inference import temporary_pipeline_mode
+
+    try:
+        with temporary_pipeline_mode(_requested_predict_mode(request)):
+            result = _predict_uploaded_file(uploaded)
+            result["inference"] = get_inference_metadata()
+    except Exception as exc:
+        return _apply_prediction_cors(request, JsonResponse({"error": str(exc).strip() or "Prediction failed."}, status=400))
+    result["system"] = _system_profile()
+    return _apply_prediction_cors(request, JsonResponse(result))
 
 
 @require_POST

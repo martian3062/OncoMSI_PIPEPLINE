@@ -66,12 +66,7 @@ def dashboard_summary() -> dict:
     )
     by_approach = Counter(link.approach_template.label for link in links)
     if not by_approach:
-        by_approach = Counter(
-            {
-                getattr(slot, "label", slot["label"]): 0
-                for slot in approach_slots
-            }
-        )
+        by_approach = Counter({slot.label: 0 for slot in approach_slots})
     figure = go.Figure(
         data=[
             go.Bar(

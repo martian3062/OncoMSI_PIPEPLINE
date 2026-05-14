@@ -5,6 +5,7 @@ import sys
 import inspect
 import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
 
 import torch
@@ -15,6 +16,15 @@ from timm.data import create_transform, resolve_data_config
 from timm.layers import SwiGLUPacked
 from torchvision import transforms
 from transformers import AutoImageProcessor, AutoModel
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+APP_ROOT = ROOT_DIR / "django_rebuild_cleaned_msi"
+if APP_ROOT.exists() and str(APP_ROOT) not in sys.path:
+    sys.path.insert(0, str(APP_ROOT))
+
+from local_encoder_package import load_encoder_package
 
 
 HYBRID_EXTRACTOR_ALIASES = {
@@ -50,6 +60,9 @@ HYBRID_EXTRACTOR_ALIASES = {
     "chief_ctp": "chief",
     "midnight": "midnight",
     "midnight-12k": "midnight",
+    "student": "student-virchow2",
+    "student-virchow2": "student-virchow2",
+    "student_virchow2": "student-virchow2",
 }
 
 HYBRID_EXTRACTOR_NAMES = {
@@ -65,6 +78,7 @@ HYBRID_EXTRACTOR_NAMES = {
     "dinov3-vitb16",
     "chief",
     "midnight",
+    "student-virchow2",
 }
 
 _REGISTERED = False
@@ -396,6 +410,15 @@ def _build_midnight(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]
     return _ForwardImageEncoder(model, forward_kind="pixel_values", pool="cls_mean"), _TensorFriendlyTransform(transform)
 
 
+def _build_local_student(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]]:
+    del hf_token
+    package_dir = os.environ.get("MSI_STUDENT_ENCODER_DIR") or os.environ.get("MSI_LOCAL_ENCODER_DIR")
+    if not package_dir:
+        raise FileNotFoundError("Set MSI_STUDENT_ENCODER_DIR to a distilled encoder package directory before using student-virchow2.")
+    package = load_encoder_package(package_dir)
+    return package.model, _TensorFriendlyTransform(package.transform)
+
+
 def _build_chief(hf_token: str | None) -> tuple[nn.Module, Callable[..., Any]]:
     repo_path = os.environ.get("CHIEF_REPO_PATH", "/home/pardeep/models/CHIEF")
     weights_path = os.environ.get("CHIEF_CTRANSPATH_WEIGHTS", "/home/pardeep/models/CHIEF/model_weight/CHIEF_CTransPath.pth")
@@ -502,6 +525,7 @@ SPECS = {
     "dinov3-vitb16": ExtractorSpec("dinov3-vitb16", 768, _build_dinov3_vitb16, aliases=("dinov3", "dino-v3", "dino_v3")),
     "chief": ExtractorSpec("chief", 768, _build_chief, aliases=("chief-ctranspath", "chief_ctp")),
     "midnight": ExtractorSpec("midnight", None, _build_midnight, aliases=("midnight-12k",)),
+    "student-virchow2": ExtractorSpec("student-virchow2", 2560, _build_local_student, aliases=("student", "student_virchow2")),
 }
 
 

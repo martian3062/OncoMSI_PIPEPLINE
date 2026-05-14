@@ -110,6 +110,12 @@ def launch_run_on_vm(run: Run) -> dict[str, Any]:
     spawn_code = (
         "import os, subprocess; "
         f"os.makedirs({str(launch_log_path.parent)!r}, exist_ok=True); "
+        + (
+            f"os.environ['MSI_STUDENT_ENCODER_DIR'] = {settings.VM_STUDENT_ENCODER_DIR!r}; "
+            if getattr(settings, "VM_STUDENT_ENCODER_DIR", "")
+            else ""
+        )
+        + 
         f"log = open({str(launch_log_path)!r}, 'ab'); "
         "proc = subprocess.Popen("
         f"[{target.runner_python!r}, {settings.VM_RUNNER_SCRIPT!r}, '--bundle-config', {str(config_path)!r}], "

@@ -4,15 +4,6 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = "django-insecure-change-me-for-production"
-DEBUG = True
-ALLOWED_HOSTS = [
-    host.strip()
-    for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost,testserver,34.59.145.240").split(",")
-    if host.strip()
-]
-
-
 def _load_env_file() -> None:
     env_path = BASE_DIR / ".env"
     if not env_path.exists():
@@ -26,6 +17,14 @@ def _load_env_file() -> None:
 
 
 _load_env_file()
+
+SECRET_KEY = "django-insecure-change-me-for-production"
+DEBUG = True
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "127.0.0.1,localhost,testserver,34.59.145.240").split(",")
+    if host.strip()
+]
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -104,6 +103,25 @@ REST_FRAMEWORK = {
 }
 
 HF_TOKEN = os.environ.get("HF_TOKEN", "")
+MSI_LOCAL_ENCODER_DIR = os.environ.get("MSI_LOCAL_ENCODER_DIR", "")
+MSI_INFERENCE_BUNDLE_DIR = os.environ.get("MSI_INFERENCE_BUNDLE_DIR", "")
+MSI_PREFER_DEVICE = os.environ.get("MSI_PREFER_DEVICE", "auto")
+MSI_PIPELINE_MODE = os.environ.get("MSI_PIPELINE_MODE", "manager2")
+MSI_MAX_INFERENCE_TILES = int(os.environ.get("MSI_MAX_INFERENCE_TILES", "24"))
+MSI_FAST_MAX_TILES = int(os.environ.get("MSI_FAST_MAX_TILES", "64"))
+MSI_FAST_CHECKPOINTS = int(os.environ.get("MSI_FAST_CHECKPOINTS", "4"))
+MSI_EXACT_MAX_TILES = int(os.environ.get("MSI_EXACT_MAX_TILES", "0"))
+MSI_EXACT_PREVIEW_TILES = int(os.environ.get("MSI_EXACT_PREVIEW_TILES", "6"))
+MSI_EXACT_TILE_THREADS = int(os.environ.get("MSI_EXACT_TILE_THREADS", "4"))
+MSI_FAST_TILE_READ_WORKERS = int(os.environ.get("MSI_FAST_TILE_READ_WORKERS", "8"))
+MSI_IMAGE_TILE_WORKERS = int(os.environ.get("MSI_IMAGE_TILE_WORKERS", "8"))
+MSI_ENCODE_PREPROCESS_WORKERS = int(os.environ.get("MSI_ENCODE_PREPROCESS_WORKERS", "8"))
+MSI_ENCODE_BATCH_SIZE = int(os.environ.get("MSI_ENCODE_BATCH_SIZE", "0"))
+MSI_SCORE_WORKERS = int(os.environ.get("MSI_SCORE_WORKERS", "8"))
+MSI_JOB_CAPACITY_LIMIT = int(os.environ.get("MSI_JOB_CAPACITY_LIMIT", "2"))
+MSI_EXACT_JOB_WEIGHT = int(os.environ.get("MSI_EXACT_JOB_WEIGHT", "2"))
+MSI_FAST_JOB_WEIGHT = int(os.environ.get("MSI_FAST_JOB_WEIGHT", "1"))
+NEXT_APP_URL = os.environ.get("NEXT_APP_URL", "http://127.0.0.1:3000")
 N8N_ENABLED = os.environ.get("N8N_ENABLED", "true").lower() == "true"
 N8N_BASE_URL = os.environ.get("N8N_BASE_URL", "http://127.0.0.1:5678")
 N8N_WEBHOOK_SECRET = os.environ.get("N8N_WEBHOOK_SECRET", "")
@@ -142,6 +160,7 @@ VM_VIRCHOW_WEIGHTS = os.environ.get(
     "VM_VIRCHOW_WEIGHTS",
     "/home/pardeep/pathology310_projects/single_slide_morphology/project_1_slideflow_msi_tcga_crc/models/virchow/pytorch_model.bin",
 )
+VM_STUDENT_ENCODER_DIR = os.environ.get("VM_STUDENT_ENCODER_DIR", "")
 
 MSI_DEFAULT_APPROACHES = [
     {

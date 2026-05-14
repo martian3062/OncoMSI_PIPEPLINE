@@ -6,6 +6,7 @@ from django.conf import settings
 from django.utils import timezone
 
 from apps.runs.models import Run
+from .inference import get_inference_metadata
 
 
 TERMINAL_STATES = {"completed", "failed"}
@@ -142,4 +143,5 @@ def build_results_beta_context() -> dict:
         "leaderboard": leaderboard,
         "top_four": leaderboard[:4],
         "live_run": _build_live_run_snapshot(),
+        "inference": get_inference_metadata(),
     }
